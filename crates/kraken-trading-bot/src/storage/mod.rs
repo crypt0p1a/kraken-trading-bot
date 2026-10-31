@@ -225,6 +225,8 @@ mod tests {
         }
         let storage = Storage::open(&path).unwrap();
         assert_eq!(storage.state("watermark").unwrap().as_deref(), Some("42"));
+        // closed before its files are removed: Windows refuses to remove an open file
+        drop(storage);
         std::fs::remove_dir_all(directory).unwrap();
     }
 
