@@ -1,0 +1,188 @@
+use super::{Result, Storage};
+use rusqlite::params;
+use rust_decimal::Decimal;
+
+/// A decision of a manager, and what came of it
+#[derive(Debug, Clone, PartialEq)]
+pub struct ActionRecord {
+    pub manager_id: i32,
+    /// UTC milliseconds
+    pub at: i64,
+    /// buy, sell or idle
+    pub kind: String,
+    pub amount: Option<Decimal>,
+    pub price: Option<Decimal>,
+    pub reason: Option<String>,
+    /// The order was only validated by Kraken
+    pub dry_run: bool,
+    /// The order placed
+    pub txid: Option<String>,
+    /// Why the order couldn't be placed
+    pub error: Option<String>,
+}
+
+/// The price of a pair at a tick
+#[derive(Debug, Clone, PartialEq)]
+pub struct TickerRecord {
+    /// Kraken name of the pair
+    pub pair: String,
+    /// UTC milliseconds
+    pub at: i64,
+    pub last: Decimal,
+    pub bid: Decimal,
+    pub ask: Decimal,
+    pub volume_24h: Decimal,
+    pub vwap_24h: Decimal,
+}
+
+impl Storage {
+    pub fn record_action(&self, action: &ActionRecord) -> Result<()> {
+        self.connection.execute(
+            "INSERT INTO actions (manager_id, at, kind, amount, price, reason, dry_run, txid, error)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                action.manager_id,
+                action.at,
+                action.kind,
+                action.amount.map(|it| it.to_string()),
+                action.price.map(|it| it.to_string()),
+                action.reason,
+                action.dry_run,
+                action.txid,
+                action.error,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// The last actions of a manager, most recent first
+    pub fn actions_of(&self, manager_id: i32, limit: usize) -> Result<Vec<ActionRecord>> {
+        let mut statement = self.connection.prepare_cached(
+            "SELECT manager_id, at, kind, amount, price, reason, dry_run, txid, error FROM actions
+             WHERE manager_id = ?1 ORDER BY at DESC, id DESC LIMIT ?2",
+        )?;
+        let rows = statement.query_map(params![manager_id, limit as i64], |row| {
+            Ok((
+                row.get::<_, i32>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, bool>(6)?,
+                row.get::<_, Option<String>>(7)?,
+                row.get::<_, Option<String>>(8)?,
+            ))
+        })?;
+
+        rows.map(|row| {
+            let (manager_id, at, kind, amount, price, reason, dry_run, txid, error) = row?;
+            Ok(ActionRecord {
+                manager_id,
+                at,
+                kind,
+                amount: super::optional_decimal(amount)?,
+                price: super::optional_decimal(price)?,
+                reason,
+                dry_run,
+                txid,
+                error,
+            })
+        })
+        .collect()
+    }
+
+    /// Records the price of a pair; a second record at the same time replaces the first one
+    pub fn record_ticker(&self, ticker: &TickerRecord) -> Result<()> {
+        self.connection.execute(
+            "INSERT OR REPLACE INTO tickers (pair, at, last, bid, ask, volume_24h, vwap_24h)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                ticker.pair,
+                ticker.at,
+                ticker.last.to_string(),
+                ticker.bid.to_string(),
+                ticker.ask.to_string(),
+                ticker.volume_24h.to_string(),
+                ticker.vwap_24h.to_string(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn ticker_count(&self, pair: &str) -> Result<usize> {
+        Ok(self.connection.query_row(
+            "SELECT COUNT(*) FROM tickers WHERE pair = ?1",
+            [pair],
+            |row| row.get::<_, i64>(0).map(|it| it as usize),
+        )?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::planner::tests::d;
+
+    fn action(at: i64, kind: &str) -> ActionRecord {
+        ActionRecord {
+            manager_id: 1,
+            at,
+            kind: kind.into(),
+            amount: Some(d("0.0006")),
+            price: Some(d("49500")),
+            reason: None,
+            dry_run: true,
+            txid: None,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn records_the_actions_most_recent_first() {
+        let storage = Storage::open_in_memory().unwrap();
+        storage.record_action(&action(1, "buy")).unwrap();
+        storage
+            .record_action(&ActionRecord {
+                error: Some("EOrder:Insufficient funds".into()),
+                ..action(2, "sell")
+            })
+            .unwrap();
+        storage
+            .record_action(&ActionRecord {
+                manager_id: 2,
+                ..action(3, "buy")
+            })
+            .unwrap();
+
+        let actions = storage.actions_of(1, 10).unwrap();
+        assert_eq!(actions.len(), 2);
+        assert_eq!(actions[0].kind, "sell");
+        assert_eq!(
+            actions[0].error.as_deref(),
+            Some("EOrder:Insufficient funds")
+        );
+        assert_eq!(actions[1], action(1, "buy"));
+        assert_eq!(storage.actions_of(1, 1).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn records_the_tickers() {
+        let storage = Storage::open_in_memory().unwrap();
+        let ticker = TickerRecord {
+            pair: "XXBTZUSD".into(),
+            at: 1,
+            last: d("77382.3"),
+            bid: d("77378.9"),
+            ask: d("77379"),
+            volume_24h: d("2223.30614445"),
+            vwap_24h: d("76937.95745"),
+        };
+        storage.record_ticker(&ticker).unwrap();
+        storage.record_ticker(&ticker).unwrap();
+        storage
+            .record_ticker(&TickerRecord { at: 2, ..ticker })
+            .unwrap();
+        assert_eq!(storage.ticker_count("XXBTZUSD").unwrap(), 2);
+    }
+}

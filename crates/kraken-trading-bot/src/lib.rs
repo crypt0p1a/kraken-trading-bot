@@ -10,11 +10,14 @@
 //! | [`pair`], [`planner`] | the constraints of a pair, the prices and amounts of the orders |
 //! | [`order`], [`ledger`] | the orders of a manager, what it has from them |
 //! | [`strategy`] | what a manager does next |
+//! | [`storage`] | the SQLite database: orders, states and history of the managers, actions, prices |
 
+pub mod clock;
 pub mod config;
 pub mod decimal;
 pub mod ledger;
 pub mod order;
 pub mod pair;
 pub mod planner;
+pub mod storage;
 pub mod strategy;
