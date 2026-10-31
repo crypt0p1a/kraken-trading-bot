@@ -474,6 +474,20 @@ async fn trading_for_days_on_a_moving_market_only_makes_money() {
             );
         }
     }
+    // only limit orders, at a price
+    for order in bot.exchange().orders() {
+        assert_eq!(
+            order.description.order_type,
+            kraken_api::trading::OrderType::Limit,
+            "{order:?}"
+        );
+        assert!(
+            order.description.price.is_some_and(|it| it > 0.0),
+            "{order:?}"
+        );
+        assert_eq!(order.oflags, "fciq");
+    }
+
     // the account never went below zero
     assert!(bot.exchange().balance("ZUSD") >= Decimal::ZERO);
     assert!(bot.exchange().balance("XXBT") >= Decimal::ZERO);

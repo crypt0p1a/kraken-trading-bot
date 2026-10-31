@@ -342,6 +342,12 @@ impl<E: Exchange> Bot<E> {
             error: None,
         };
 
+        if let Err(error) = ensure_limit(&request) {
+            record.error = Some(error.clone());
+            self.storage.record_action(&record)?;
+            return Err(BotError::Config(error));
+        }
+
         match self.exchange.new_order(&request).await {
             Ok(answer) => {
                 let txid = answer.txids.first().cloned();
@@ -384,6 +390,47 @@ impl<E: Exchange> Bot<E> {
     }
 }
 
+/// The bot only trades with limit orders, at the price it computed, with the fees in the quote:
+/// any other order is refused before reaching Kraken
+pub fn ensure_limit(order: &NewOrder) -> Result<(), String> {
+    if order.order_type != OrderType::Limit {
+        return Err(format!(
+            "refused: a {:?} order, the bot only places limit orders",
+            order.order_type
+        ));
+    }
+    let price = order
+        .price
+        .as_deref()
+        .and_then(|it| it.parse::<Decimal>().ok());
+    if price.is_none_or(|it| it <= Decimal::ZERO) {
+        return Err(format!(
+            "refused: a limit order without a valid price ({:?})",
+            order.price
+        ));
+    }
+    if order.price2.is_some() {
+        return Err("refused: a second price, the bot only places plain limit orders".into());
+    }
+    if !order
+        .oflags
+        .as_ref()
+        .is_some_and(|it| it.contains(&OrderFlag::Fciq))
+    {
+        return Err(
+            "refused: an order without fciq, the ledger expects the fees in the quote".into(),
+        );
+    }
+    if order
+        .oflags
+        .as_ref()
+        .is_some_and(|it| it.contains(&OrderFlag::Viqc))
+    {
+        return Err("refused: a volume in the quote (viqc), only for market orders".into());
+    }
+    Ok(())
+}
+
 fn log_balances(manager: &ManagerConfig, state: &ManagerState) {
     let balances = &state.balances;
     tracing::info!(
@@ -398,4 +445,127 @@ fn log_balances(manager: &ManagerConfig, state: &ManagerState) {
         budget = %manager.budget,
         "balances"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn limit() -> NewOrder {
+        NewOrder {
+            pair: "XBTUSD".into(),
+            side: OrderSide::Buy,
+            order_type: OrderType::Limit,
+            volume: "0.001".into(),
+            price: Some("49500".into()),
+            price2: None,
+            oflags: Some(vec![OrderFlag::Fciq]),
+            time_in_force: Some(TimeInForce::Gtd),
+            start_time: None,
+            expire_time: Some("+43200".into()),
+            cl_ord_id: None,
+            userref: Some(1),
+            validate: None,
+        }
+    }
+
+    #[test]
+    fn accepts_the_limit_orders_of_the_bot() {
+        assert_eq!(ensure_limit(&limit()), Ok(()));
+        let sell = NewOrder {
+            side: OrderSide::Sell,
+            time_in_force: Some(TimeInForce::Gtc),
+            expire_time: None,
+            ..limit()
+        };
+        assert_eq!(ensure_limit(&sell), Ok(()));
+    }
+
+    #[test]
+    fn refuses_every_order_which_is_not_a_plain_limit_order() {
+        let refused = [
+            NewOrder {
+                order_type: OrderType::Market,
+                price: None,
+                ..limit()
+            },
+            NewOrder {
+                order_type: OrderType::Market,
+                ..limit()
+            },
+            NewOrder {
+                order_type: OrderType::StopLoss,
+                ..limit()
+            },
+            NewOrder {
+                order_type: OrderType::TakeProfit,
+                ..limit()
+            },
+            NewOrder {
+                order_type: OrderType::StopLossLimit,
+                price2: Some("49000".into()),
+                ..limit()
+            },
+            NewOrder {
+                order_type: OrderType::TakeProfitLimit,
+                price2: Some("51000".into()),
+                ..limit()
+            },
+            NewOrder {
+                order_type: OrderType::TrailingStop,
+                ..limit()
+            },
+            NewOrder {
+                order_type: OrderType::TrailingStopLimit,
+                ..limit()
+            },
+            NewOrder {
+                order_type: OrderType::Iceberg,
+                ..limit()
+            },
+            NewOrder {
+                order_type: OrderType::SettlePosition,
+                ..limit()
+            },
+            NewOrder {
+                order_type: OrderType::Unknown,
+                ..limit()
+            },
+            NewOrder {
+                price: None,
+                ..limit()
+            },
+            NewOrder {
+                price: Some("0".into()),
+                ..limit()
+            },
+            NewOrder {
+                price: Some("-1".into()),
+                ..limit()
+            },
+            NewOrder {
+                price: Some("market".into()),
+                ..limit()
+            },
+            NewOrder {
+                price2: Some("1".into()),
+                ..limit()
+            },
+            NewOrder {
+                oflags: None,
+                ..limit()
+            },
+            NewOrder {
+                oflags: Some(vec![OrderFlag::Fcib]),
+                ..limit()
+            },
+            NewOrder {
+                oflags: Some(vec![OrderFlag::Fciq, OrderFlag::Viqc]),
+                ..limit()
+            },
+        ];
+        for order in refused {
+            assert!(ensure_limit(&order).is_err(), "{order:?}");
+        }
+    }
 }
