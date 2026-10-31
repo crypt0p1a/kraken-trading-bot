@@ -159,3 +159,155 @@ impl From<kraken_api::KrakenError> for BotError {
         BotError::Exchange(error)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::exchange::SimulatedExchange;
+    use rust_decimal::Decimal;
+    use std::str::FromStr;
+
+    fn d(value: &str) -> Decimal {
+        Decimal::from_str(value).unwrap()
+    }
+
+    fn exchange() -> SimulatedExchange {
+        let exchange = SimulatedExchange::new(1_800_000_000.0);
+        exchange.add_pair("XXBTZUSD", "XBTUSD", "XXBT", "ZUSD", d("50000"));
+        exchange.deposit("ZUSD", d("1000000"));
+        exchange
+    }
+
+    fn closed_order(exchange: &SimulatedExchange, userref: i64) -> String {
+        let txid = exchange.add_foreign_order(
+            Some(userref),
+            "XBTUSD",
+            kraken_api::trading::OrderSide::Buy,
+            d("0.001"),
+            d("49000"),
+        );
+        exchange.fill(&txid, None);
+        exchange.advance(1.0);
+        txid
+    }
+
+    #[tokio::test]
+    async fn reads_every_page_of_the_history() {
+        let exchange = exchange();
+        for _ in 0..120 {
+            closed_order(&exchange, 1);
+        }
+        closed_order(&exchange, 2);
+        let storage = Storage::open_in_memory().unwrap();
+
+        let report = synchronize(&exchange, &storage, &HashSet::from([1]), exchange.now())
+            .await
+            .unwrap();
+        assert_eq!(report.updated, 120);
+        assert_eq!(storage.orders_of(1).unwrap().len(), 120);
+        assert!(storage.orders_of(2).unwrap().is_empty());
+
+        // the history is read once; the orders closed within the hour before a synchronization
+        // are read again at the next one (the overlap), then no more
+        exchange.advance(2.0 * OVERLAP);
+        let again = synchronize(&exchange, &storage, &HashSet::from([1]), exchange.now())
+            .await
+            .unwrap();
+        assert_eq!(again.updated, 120, "{again:?}");
+        let then = synchronize(&exchange, &storage, &HashSet::from([1]), exchange.now())
+            .await
+            .unwrap();
+        assert_eq!(then.updated, 0, "{then:?}");
+    }
+
+    #[tokio::test]
+    async fn finds_the_orders_closed_since_the_previous_synchronization() {
+        let exchange = exchange();
+        let storage = Storage::open_in_memory().unwrap();
+        let ids = HashSet::from([1]);
+        synchronize(&exchange, &storage, &ids, exchange.now())
+            .await
+            .unwrap();
+
+        let txid = closed_order(&exchange, 1);
+        synchronize(&exchange, &storage, &ids, exchange.now())
+            .await
+            .unwrap();
+        assert!(
+            storage
+                .order(&txid)
+                .unwrap()
+                .is_some_and(|it| it.is_final())
+        );
+    }
+
+    #[tokio::test]
+    async fn asks_kraken_for_the_orders_believed_open() {
+        let exchange = exchange();
+        let storage = Storage::open_in_memory().unwrap();
+        let ids = HashSet::from([1]);
+        synchronize(&exchange, &storage, &ids, exchange.now())
+            .await
+            .unwrap();
+
+        // closed long before the watermark: only QueryOrders finds it
+        let txid = exchange.add_foreign_order(
+            Some(1),
+            "XBTUSD",
+            kraken_api::trading::OrderSide::Buy,
+            d("0.001"),
+            d("49000"),
+        );
+        let open = BotOrder::from_kraken(
+            &exchange
+                .orders()
+                .into_iter()
+                .find(|it| it.txid == txid)
+                .unwrap(),
+        )
+        .unwrap();
+        storage.upsert_orders(&[open]).unwrap();
+        exchange.cancel(&txid);
+        storage
+            .set_state(WATERMARK, &(exchange.now() + 100_000.0).to_string())
+            .unwrap();
+
+        synchronize(&exchange, &storage, &ids, exchange.now())
+            .await
+            .unwrap();
+        assert_eq!(
+            storage.order(&txid).unwrap().unwrap().status,
+            kraken_api::trading::OrderStatus::Canceled
+        );
+    }
+
+    #[tokio::test]
+    async fn keeps_an_order_unknown_to_kraken() {
+        let exchange = exchange();
+        let storage = Storage::open_in_memory().unwrap();
+        let ids = HashSet::from([1]);
+        let ghost = BotOrder {
+            txid: "OGHOST-AAAAA-BBBBBB".into(),
+            manager_id: 1,
+            pair: "XBTUSD".into(),
+            side: kraken_api::trading::OrderSide::Buy,
+            status: kraken_api::trading::OrderStatus::Open,
+            volume: d("0.001"),
+            volume_executed: Decimal::ZERO,
+            cost: Decimal::ZERO,
+            fee: Decimal::ZERO,
+            limit_price: Some(d("49000")),
+            average_price: None,
+            open_time: 1.0,
+            close_time: None,
+            expire_time: None,
+        };
+        storage.upsert_orders(std::slice::from_ref(&ghost)).unwrap();
+
+        synchronize(&exchange, &storage, &ids, exchange.now())
+            .await
+            .unwrap();
+        // left as it is: the manager waits for it, which is the safe side
+        assert_eq!(storage.order(&ghost.txid).unwrap(), Some(ghost));
+    }
+}

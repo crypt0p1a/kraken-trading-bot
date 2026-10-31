@@ -51,6 +51,7 @@ async fn kraken() -> MockServer {
             json!({"ZUSD": {"balance": "500", "hold_trade": "0"}}),
         ),
         ("/0/private/OpenOrders", json!({"open": {}})),
+        ("/0/private/QueryOrders", json!({})),
         ("/0/private/ClosedOrders", json!({"closed": {}, "count": 0})),
         (
             "/0/private/AddOrder",
@@ -157,4 +158,31 @@ managers:
         .filter(|it| form(it).contains(&("userref".into(), "42".into())))
         .count();
     assert_eq!(with_userref, 1);
+
+    // an order the database believes open, found nowhere else: asked to Kraken by its txid
+    bot.storage()
+        .upsert_orders(&[kraken_trading_bot::order::BotOrder {
+            txid: "OAAAAA-BBBBB-CCCCCC".into(),
+            manager_id: 42,
+            pair: "XBTUSD".into(),
+            side: kraken_api::trading::OrderSide::Buy,
+            status: kraken_api::trading::OrderStatus::Open,
+            volume: "0.001".parse().unwrap(),
+            volume_executed: Default::default(),
+            cost: Default::default(),
+            fee: Default::default(),
+            limit_price: Some("49500".parse().unwrap()),
+            average_price: None,
+            open_time: 1.0,
+            close_time: None,
+            expire_time: None,
+        }])
+        .unwrap();
+    bot.tick().await.unwrap();
+    let requests = server.received_requests().await.unwrap();
+    let query = requests
+        .iter()
+        .find(|it| it.url.path() == "/0/private/QueryOrders")
+        .expect("QueryOrders");
+    assert!(form(query).contains(&("txid".into(), "OAAAAA-BBBBB-CCCCCC".into())));
 }
