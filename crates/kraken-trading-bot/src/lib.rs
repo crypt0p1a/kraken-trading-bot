@@ -7,5 +7,14 @@
 //! | Module | Responsibility |
 //! |--------|----------------|
 //! | [`config`] | the YAML configuration of the managers, the environment |
+//! | [`pair`], [`planner`] | the constraints of a pair, the prices and amounts of the orders |
+//! | [`order`], [`ledger`] | the orders of a manager, what it has from them |
+//! | [`strategy`] | what a manager does next |
 
 pub mod config;
+pub mod decimal;
+pub mod ledger;
+pub mod order;
+pub mod pair;
+pub mod planner;
+pub mod strategy;
