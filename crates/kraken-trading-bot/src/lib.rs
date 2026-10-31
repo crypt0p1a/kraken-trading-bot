@@ -11,13 +11,32 @@
 //! | [`order`], [`ledger`] | the orders of a manager, what it has from them |
 //! | [`strategy`] | what a manager does next |
 //! | [`storage`] | the SQLite database: orders, states and history of the managers, actions, prices |
+//! | [`exchange`] | what the bot needs from Kraken, the real one and a simulated one |
+//! | [`sync`] | the orders of the managers, from Kraken to the database |
+//! | [`bot`] | a tick: synchronization, then each manager decides and acts |
 
+pub mod bot;
 pub mod clock;
 pub mod config;
 pub mod decimal;
+pub mod exchange;
 pub mod ledger;
 pub mod order;
 pub mod pair;
 pub mod planner;
 pub mod storage;
 pub mod strategy;
+pub mod sync;
+
+/// Errors of a tick
+#[derive(Debug, thiserror::Error)]
+pub enum BotError {
+    #[error("Kraken: {0}")]
+    Exchange(kraken_api::KrakenError),
+    #[error("database: {0}")]
+    Storage(String),
+    #[error("configuration: {0}")]
+    Config(String),
+}
+
+pub type BotResult<T> = Result<T, BotError>;

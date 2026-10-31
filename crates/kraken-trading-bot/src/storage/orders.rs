@@ -117,7 +117,8 @@ impl Storage {
                     volume = excluded.volume, volume_executed = excluded.volume_executed,
                     cost = excluded.cost, fee = excluded.fee, limit_price = excluded.limit_price,
                     average_price = excluded.average_price, close_time = excluded.close_time,
-                    expire_time = excluded.expire_time, updated_at = excluded.updated_at"
+                    open_time = excluded.open_time, expire_time = excluded.expire_time,
+                    updated_at = excluded.updated_at"
             ))?;
             let now = now_millis();
             for order in orders {
