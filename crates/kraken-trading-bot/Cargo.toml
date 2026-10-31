@@ -1,0 +1,28 @@
+[package]
+name = "kraken-trading-bot"
+description = "Trading bot on Kraken Spot: managers buying below the market and selling above their cost"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "kraken-trading-bot"
+path = "src/main.rs"
+
+[dependencies]
+humantime-serde.workspace = true
+kraken-api.workspace = true
+rusqlite.workspace = true
+rust_decimal.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_norway.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "time"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+wiremock.workspace = true

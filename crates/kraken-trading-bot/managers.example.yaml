@@ -1,0 +1,31 @@
+# Configuration of the managers of kraken-trading-bot
+# The credentials are never written here: KRAKEN_API_KEY / KRAKEN_API_SECRET in the environment
+
+# true: the orders are only validated by Kraken, never placed. Set it to false to trade for real
+dry_run: true
+# delay between two ticks
+tick_interval: 5m
+# a buy order not filled after this delay expires, and is placed again from the new price
+buy_order_timeout: 12h
+
+managers:
+  # id: Kraken userref of the orders of the manager, from 1 to 2147483647, unique, never reused
+  # budget: in the quote currency of the pair (USD for XBTUSD)
+  # buy_below: buys at -buy_below% of the last price
+  # sell_above: sells for what the position cost + sell_above%, fees included
+  # mode: active (default) | closing (sells what it holds, doesn't buy anymore)
+  - id: 1
+    pair: XBTUSD
+    budget: 30
+    buy_below: 1.0
+    sell_above: 1.5
+  - id: 2
+    pair: XBTUSD
+    budget: 30
+    buy_below: 2.0
+    sell_above: 3.0
+  - id: 3
+    pair: ETHUSD
+    budget: 30
+    buy_below: 0.8
+    sell_above: 1.2
