@@ -1,0 +1,7 @@
+target
+dist
+.git
+.github
+.env
+*.sqlite*
+managers.yaml

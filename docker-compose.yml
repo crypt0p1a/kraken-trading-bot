@@ -1,0 +1,31 @@
+# Runs the bot: copy crates/kraken-trading-bot/managers.example.yaml to managers.yaml, put
+# KRAKEN_API_KEY / KRAKEN_API_SECRET in .env, then
+#
+#   docker compose up -d --build
+#   docker compose logs -f
+#
+# The bot is a dry run until managers.yaml says dry_run: false.
+
+services:
+  kraken-trading-bot:
+    build: .
+    image: kraken-trading-bot
+    container_name: kraken-trading-bot
+    restart: unless-stopped
+    # KRAKEN_API_KEY, KRAKEN_API_SECRET
+    env_file: .env
+    environment:
+      RUST_LOG: info
+    volumes:
+      - ./managers.yaml:/config/managers.yaml:ro
+      - kraken-bot-data:/data
+    # the tick in progress ends before the bot stops
+    stop_grace_period: 1m
+    logging:
+      driver: json-file
+      options:
+        max-size: 50m
+        max-file: "10"
+
+volumes:
+  kraken-bot-data:
