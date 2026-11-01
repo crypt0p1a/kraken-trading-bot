@@ -23,18 +23,35 @@ managers:
   # buy_below: buys at -buy_below% of the last price
   # sell_above: sells for what the position cost + sell_above%, fees included
   # mode: active (default) | closing (sells what it holds, doesn't buy anymore)
+  # bitcoin: from small frequent moves to deep dips
   - id: 1
+    pair: XBTUSD
+    budget: 30
+    buy_below: 0.5
+    sell_above: 0.8
+  - id: 2
     pair: XBTUSD
     budget: 30
     buy_below: 1.0
     sell_above: 1.5
-  - id: 2
+  - id: 3
     pair: XBTUSD
     budget: 30
     buy_below: 2.0
     sell_above: 3.0
-  - id: 3
-    pair: ETHUSD
+  - id: 4
+    pair: XBTUSD
     budget: 30
-    buy_below: 0.8
-    sell_above: 1.2
+    buy_below: 3.5
+    sell_above: 5.0
+  # ether: fewer managers, smaller budgets
+  - id: 5
+    pair: ETHUSD
+    budget: 20
+    buy_below: 1.0
+    sell_above: 1.5
+  - id: 6
+    pair: ETHUSD
+    budget: 20
+    buy_below: 2.5
+    sell_above: 3.5
