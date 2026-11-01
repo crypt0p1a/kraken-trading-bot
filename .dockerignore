@@ -2,6 +2,11 @@ target
 dist
 .git
 .github
+# secrets and local state: never in the build context
 .env
 *.sqlite*
 managers.yaml
+managers.yml
+# the examples are for the host: the configuration is mounted in /config
+.env.example
+managers.example.yaml
