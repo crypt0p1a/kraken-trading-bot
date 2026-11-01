@@ -10,3 +10,4 @@ managers.yml
 # the examples are for the host: the configuration is mounted in /config
 .env.example
 managers.example.yaml
+platforms
