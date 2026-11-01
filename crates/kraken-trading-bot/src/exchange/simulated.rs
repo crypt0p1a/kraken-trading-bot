@@ -1,5 +1,4 @@
 use super::{Exchange, ExchangeResult};
-use crate::decimal::dec;
 use kraken_api::KrakenError;
 use kraken_api::account::{ExtendedBalance, FeeInfo, TradeVolume};
 use kraken_api::market::{AssetPair, PriceLevel, Ticker, TradeLevel, Window, WindowCount};
@@ -8,7 +7,6 @@ use kraken_api::trading::{
     Order, OrderDescription, OrderSide, OrderStatus, OrderType, TimeInForce,
 };
 use rust_decimal::Decimal;
-use rust_decimal::prelude::ToPrimitive;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Mutex;
@@ -39,10 +37,6 @@ fn error(body: &str) -> KrakenError {
         status: 200,
         body: body.into(),
     }
-}
-
-fn number(value: Decimal) -> f64 {
-    value.to_f64().unwrap_or_default()
 }
 
 impl SimulatedExchange {
@@ -122,7 +116,7 @@ impl SimulatedExchange {
             .iter()
             .filter(|it| it.status == OrderStatus::Open && it.description.pair == altname)
             .filter(|it| {
-                let limit = dec(it.description.price.unwrap_or_default());
+                let limit = it.description.price.unwrap_or_default();
                 match it.description.side {
                     OrderSide::Buy => price <= limit,
                     OrderSide::Sell => price >= limit,
@@ -152,8 +146,8 @@ impl SimulatedExchange {
             (
                 order.description.pair.clone(),
                 order.description.side,
-                dec(order.description.price.unwrap_or_default()),
-                dec(order.volume) - dec(order.volume_executed),
+                order.description.price.unwrap_or_default(),
+                order.volume - order.volume_executed,
             )
         };
         let executed = volume.unwrap_or(remaining).min(remaining);
@@ -179,13 +173,13 @@ impl SimulatedExchange {
         }
 
         let order = &mut state.orders[index];
-        let total_executed = dec(order.volume_executed) + executed;
-        let total_cost = dec(order.cost) + cost;
-        order.volume_executed = number(total_executed);
-        order.cost = number(total_cost);
-        order.fee = number(dec(order.fee) + fee);
-        order.average_price = number(total_cost / total_executed);
-        if total_executed >= dec(order.volume) {
+        let total_executed = order.volume_executed + executed;
+        let total_cost = order.cost + cost;
+        order.volume_executed = total_executed;
+        order.cost = total_cost;
+        order.fee += fee;
+        order.average_price = total_cost / total_executed;
+        if total_executed >= order.volume {
             order.status = OrderStatus::Closed;
             order.close_time = Some(now);
         }
@@ -238,8 +232,8 @@ impl SimulatedExchange {
                     .pairs
                     .values()
                     .find(|pair| pair.altname == it.description.pair)?;
-                let remaining = dec(it.volume) - dec(it.volume_executed);
-                let limit = dec(it.description.price.unwrap_or_default());
+                let remaining = it.volume - it.volume_executed;
+                let limit = it.description.price.unwrap_or_default();
                 match it.description.side {
                     OrderSide::Buy if pair.quote == asset => {
                         Some(remaining * limit * (Decimal::ONE + fee_rate))
@@ -296,17 +290,17 @@ fn order(
             aclass: Some("forex".into()),
             side,
             order_type: OrderType::Limit,
-            price: Some(number(price)),
-            price2: Some(0.0),
+            price: Some(price),
+            price2: Some(Decimal::ZERO),
             leverage: Some("none".into()),
             order: format!("{side_name} {volume} {pair} @ limit {price}"),
             close: None,
         },
-        volume: number(volume),
-        volume_executed: 0.0,
-        cost: 0.0,
-        fee: 0.0,
-        average_price: 0.0,
+        volume,
+        volume_executed: Decimal::ZERO,
+        cost: Decimal::ZERO,
+        fee: Decimal::ZERO,
+        average_price: Decimal::ZERO,
         stop_price: None,
         limit_price: None,
         trigger: None,
@@ -349,7 +343,7 @@ impl Exchange for SimulatedExchange {
         Ok(keys
             .into_keys()
             .map(|key| {
-                let price = number(state.prices[&key]);
+                let price = state.prices[&key];
                 let window = Window {
                     today: price,
                     last_24h: price,
@@ -357,21 +351,21 @@ impl Exchange for SimulatedExchange {
                 let ticker = Ticker {
                     ask: PriceLevel {
                         price,
-                        whole_lot_volume: 1.0,
-                        lot_volume: 1.0,
+                        whole_lot_volume: Decimal::ONE,
+                        lot_volume: Decimal::ONE,
                     },
                     bid: PriceLevel {
                         price,
-                        whole_lot_volume: 1.0,
-                        lot_volume: 1.0,
+                        whole_lot_volume: Decimal::ONE,
+                        lot_volume: Decimal::ONE,
                     },
                     last_trade: TradeLevel {
                         price,
-                        lot_volume: 0.1,
+                        lot_volume: Decimal::new(1, 1),
                     },
                     volume: Window {
-                        today: 10.0,
-                        last_24h: 20.0,
+                        today: Decimal::TEN,
+                        last_24h: Decimal::from(20),
                     },
                     vwap: window,
                     trades: WindowCount {
@@ -389,14 +383,14 @@ impl Exchange for SimulatedExchange {
 
     async fn trade_volume(&self, pairs: &[String]) -> ExchangeResult<TradeVolume> {
         let keys = self.asset_pairs(pairs).await?;
-        let fee = number(self.state().fee_percent);
+        let fee = self.state().fee_percent;
         let info = FeeInfo {
             fee,
-            minfee: Some(0.0),
+            minfee: Some(Decimal::ZERO),
             maxfee: Some(fee),
             nextfee: None,
             nextvolume: None,
-            tiervolume: Some(0.0),
+            tiervolume: Some(Decimal::ZERO),
             nextfuturesvolume: None,
         };
         let fees: HashMap<String, FeeInfo> =
@@ -404,7 +398,7 @@ impl Exchange for SimulatedExchange {
         Ok(TradeVolume {
             currency: "ZUSD".into(),
             asset_class: Some("currency".into()),
-            volume: 0.0,
+            volume: Decimal::ZERO,
             inputs: None,
             fees_maker: fees.clone(),
             fees,
@@ -419,8 +413,8 @@ impl Exchange for SimulatedExchange {
             .map(|(asset, balance)| {
                 let held = Self::held(&state, asset);
                 let extended = ExtendedBalance {
-                    balance: number(*balance),
-                    hold_trade: Some(number(held)),
+                    balance: *balance,
+                    hold_trade: Some(held),
                     credit: None,
                     credit_used: None,
                 };
@@ -501,10 +495,10 @@ impl Exchange for SimulatedExchange {
             .as_deref()
             .and_then(|it| Decimal::from_str(it).ok())
             .ok_or_else(|| error("EGeneral:Invalid arguments:price"))?;
-        if volume < dec(pair.ordermin.unwrap_or_default()) {
+        if volume < pair.ordermin.unwrap_or_default() {
             return Err(error("EGeneral:Invalid arguments:volume minimum not met"));
         }
-        if volume * price < dec(pair.costmin.unwrap_or_default()) {
+        if volume * price < pair.costmin.unwrap_or_default() {
             return Err(error("EOrder:Cost minimum not met"));
         }
 

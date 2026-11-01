@@ -1,6 +1,5 @@
 //! The orders of the managers, as the bot uses them
 
-use crate::decimal::dec;
 use kraken_api::trading::{Order, OrderSide, OrderStatus};
 use rust_decimal::Decimal;
 
@@ -41,7 +40,7 @@ impl BotOrder {
     /// The order of Kraken, None when it doesn't belong to a manager
     pub fn from_kraken(order: &Order) -> Option<Self> {
         let manager_id = i32::try_from(order.userref?).ok().filter(|it| *it > 0)?;
-        let positive = |value: Option<f64>| value.map(dec).filter(|it| *it > Decimal::ZERO);
+        let positive = |value: Option<Decimal>| value.filter(|it| *it > Decimal::ZERO);
 
         Some(Self {
             txid: order.txid.clone(),
@@ -49,10 +48,10 @@ impl BotOrder {
             pair: order.description.pair.clone(),
             side: order.description.side,
             status: order.status,
-            volume: dec(order.volume),
-            volume_executed: dec(order.volume_executed),
-            cost: dec(order.cost),
-            fee: dec(order.fee),
+            volume: order.volume,
+            volume_executed: order.volume_executed,
+            cost: order.cost,
+            fee: order.fee,
             limit_price: positive(order.description.price),
             average_price: positive(Some(order.average_price)),
             open_time: order.open_time,

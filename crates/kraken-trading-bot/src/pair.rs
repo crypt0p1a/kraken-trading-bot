@@ -1,6 +1,5 @@
 //! The constraints of a Kraken pair on the orders
 
-use crate::decimal::dec;
 use kraken_api::market::AssetPair;
 use rust_decimal::Decimal;
 
@@ -37,12 +36,11 @@ impl PairRules {
             price_decimals,
             tick_size: pair
                 .tick_size
-                .map(dec)
                 .filter(|it| *it > Decimal::ZERO)
                 .unwrap_or_else(|| Decimal::new(1, price_decimals)),
             lot_decimals: pair.lot_decimals.max(0) as u32,
-            ordermin: pair.ordermin.map(dec).unwrap_or_default(),
-            costmin: pair.costmin.map(dec).unwrap_or_default(),
+            ordermin: pair.ordermin.unwrap_or_default(),
+            costmin: pair.costmin.unwrap_or_default(),
         }
     }
 }

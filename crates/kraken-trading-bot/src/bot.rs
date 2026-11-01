@@ -3,7 +3,7 @@
 
 use crate::clock::now_millis;
 use crate::config::{BotConfig, EventKind, ManagerConfig, ManagerMode};
-use crate::decimal::{dec, percent};
+use crate::decimal::percent;
 use crate::exchange::Exchange;
 use crate::ledger::{self, Balances};
 use crate::notify::{self, OrderChange, OrderEvent};
@@ -274,24 +274,24 @@ impl<E: Exchange> Bot<E> {
             let fee = fees
                 .fees
                 .get(&key)
-                .map(|it| dec(it.fee))
+                .map(|it| it.fee)
                 .ok_or_else(|| BotError::Config(format!("no fee for {key}")))?;
 
             self.storage.record_ticker(&TickerRecord {
                 pair: key.clone(),
                 at,
-                last: dec(ticker.last_trade.price),
-                bid: dec(ticker.bid.price),
-                ask: dec(ticker.ask.price),
-                volume_24h: dec(ticker.volume.last_24h),
-                vwap_24h: dec(ticker.vwap.last_24h),
+                last: ticker.last_trade.price,
+                bid: ticker.bid.price,
+                ask: ticker.ask.price,
+                volume_24h: ticker.volume.last_24h,
+                vwap_24h: ticker.vwap.last_24h,
             })?;
 
             markets.insert(
                 key.clone(),
                 Market {
                     rules: PairRules::from_asset_pair(&key, pair),
-                    reference: dec(ticker.last_trade.price),
+                    reference: ticker.last_trade.price,
                     fee_rate: percent(fee),
                 },
             );
@@ -320,7 +320,7 @@ impl<E: Exchange> Bot<E> {
             .balances()
             .await?
             .into_iter()
-            .map(|(asset, balance)| (asset, dec(balance.available())))
+            .map(|(asset, balance)| (asset, balance.available()))
             .collect();
 
         let mut outcomes = HashMap::new();

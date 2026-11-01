@@ -482,7 +482,7 @@ async fn trading_for_days_on_a_moving_market_only_makes_money() {
             "{order:?}"
         );
         assert!(
-            order.description.price.is_some_and(|it| it > 0.0),
+            order.description.price.is_some_and(|it| it > Decimal::ZERO),
             "{order:?}"
         );
         assert_eq!(order.oflags, "fciq");
