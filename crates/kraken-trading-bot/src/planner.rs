@@ -85,6 +85,7 @@ pub(crate) mod tests {
         PairRules {
             key: "XXBTZUSD".into(),
             altname: "XBTUSD".into(),
+            base_asset: "XXBT".into(),
             quote_asset: "ZUSD".into(),
             price_decimals: 1,
             tick_size: d("0.1"),

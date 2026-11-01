@@ -3,6 +3,7 @@ use serde::Deserialize;
 use std::collections::HashSet;
 use std::path::Path;
 use std::time::Duration;
+pub use trading_notify::{EventKind, Language};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -56,7 +57,56 @@ pub struct BotConfig {
     /// A buy order not filled after this delay expires, and is placed again from the new price
     #[serde(default = "default_buy_order_timeout", with = "humantime_serde")]
     pub buy_order_timeout: Duration,
+    /// Push notifications, none when missing
+    #[serde(default)]
+    pub notifications: Option<NotificationsConfig>,
     pub managers: Vec<ManagerConfig>,
+}
+
+/// ntfy server: the topic, and its access token if any, are in the environment
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NtfyConfig {
+    /// https://ntfy.sh by default, or a self-hosted server
+    #[serde(default = "default_ntfy_server")]
+    pub server: String,
+}
+
+fn default_ntfy_server() -> String {
+    "https://ntfy.sh".into()
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NotificationsConfig {
+    pub ntfy: NtfyConfig,
+    /// Every event when missing
+    #[serde(default = "default_events")]
+    pub events: Vec<EventKind>,
+    /// Notifies the orders of a dry run too: false by default, a dry run validating an order at
+    /// every tick
+    #[serde(default)]
+    pub dry_run: bool,
+    /// Hour of the daily summary, UTC
+    #[serde(default = "default_daily_summary_hour")]
+    pub daily_summary_hour: u32,
+    /// Language of the notifications: en (default) or fr
+    #[serde(default)]
+    pub language: Language,
+}
+
+fn default_events() -> Vec<EventKind> {
+    EventKind::ALL.to_vec()
+}
+
+fn default_daily_summary_hour() -> u32 {
+    20
+}
+
+impl NotificationsConfig {
+    pub fn wants(&self, event: EventKind) -> bool {
+        self.events.contains(&event)
+    }
 }
 
 fn default_dry_run() -> bool {
@@ -101,6 +151,21 @@ impl BotConfig {
                 "buy_order_timeout must be at least 1m, got {:?}",
                 self.buy_order_timeout
             ));
+        }
+
+        if let Some(notifications) = &self.notifications {
+            if notifications.daily_summary_hour > 23 {
+                return invalid(format!(
+                    "notifications: daily_summary_hour must be from 0 to 23, got {}",
+                    notifications.daily_summary_hour
+                ));
+            }
+            let server = notifications.ntfy.server.trim();
+            if !(server.starts_with("https://") || server.starts_with("http://")) {
+                return invalid(format!(
+                    "notifications: the ntfy server must be an http(s) URL, got {server}"
+                ));
+            }
         }
 
         let mut ids = HashSet::new();
@@ -270,6 +335,60 @@ managers:
         )
         .unwrap_err();
         assert!(error.to_string().contains("used twice"), "{error}");
+    }
+
+    #[test]
+    fn reads_the_notifications() {
+        let config = BotConfig::parse(
+            "notifications:
+  ntfy: {server: https://ntfy.example.com}
+  events: [placed, filled]
+  dry_run: true
+  daily_summary_hour: 7
+  language: fr
+managers: []",
+        )
+        .unwrap();
+        let notifications = config.notifications.unwrap();
+        assert_eq!(notifications.ntfy.server, "https://ntfy.example.com");
+        assert!(notifications.wants(EventKind::Filled));
+        assert!(!notifications.wants(EventKind::Failed));
+        assert!(notifications.dry_run);
+        assert_eq!(notifications.daily_summary_hour, 7);
+        assert_eq!(notifications.language, Language::Fr);
+    }
+
+    #[test]
+    fn notifies_everything_on_ntfy_sh_by_default() {
+        let config = BotConfig::parse("notifications: {ntfy: {}}\nmanagers: []").unwrap();
+        let notifications = config.notifications.unwrap();
+        assert_eq!(notifications.ntfy.server, "https://ntfy.sh");
+        assert!(EventKind::ALL.iter().all(|it| notifications.wants(*it)));
+        assert!(!notifications.dry_run);
+        assert_eq!(notifications.daily_summary_hour, 20);
+        assert_eq!(notifications.language, Language::En);
+
+        assert_eq!(
+            BotConfig::parse("managers: []").unwrap().notifications,
+            None
+        );
+    }
+
+    #[test]
+    fn rejects_the_invalid_notifications() {
+        for yaml in [
+            "notifications: {ntfy: {}, daily_summary_hour: 24}",
+            "notifications: {ntfy: {server: ntfy.sh}}",
+            "notifications: {ntfy: {}, events: [everything]}",
+            "notifications: {ntfy: {topic: secret}}",
+            "notifications: {ntfy: {}, language: de}",
+            "notifications: {events: [placed]}",
+        ] {
+            assert!(
+                BotConfig::parse(&format!("{yaml}\nmanagers: []")).is_err(),
+                "{yaml}"
+            );
+        }
     }
 
     #[test]

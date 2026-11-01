@@ -14,6 +14,8 @@
 //! | [`exchange`] | what the bot needs from Kraken, the real one and a simulated one |
 //! | [`sync`] | the orders of the managers, from Kraken to the database |
 //! | [`bot`] | a tick: synchronization, then each manager decides and acts |
+//! | [`notify`] | what changed in the orders, for the notifications of `trading-notify` |
+//! | [`notify`] | the notifications on the phone, through ntfy |
 
 pub mod bot;
 pub mod clock;
@@ -21,6 +23,7 @@ pub mod config;
 pub mod decimal;
 pub mod exchange;
 pub mod ledger;
+pub mod notify;
 pub mod order;
 pub mod pair;
 pub mod planner;

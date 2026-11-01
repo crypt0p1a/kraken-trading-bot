@@ -2,10 +2,11 @@
 //! ManagersPool of cex-trading-bot
 
 use crate::clock::now_millis;
-use crate::config::{BotConfig, ManagerConfig, ManagerMode};
+use crate::config::{BotConfig, EventKind, ManagerConfig, ManagerMode};
 use crate::decimal::{dec, percent};
 use crate::exchange::Exchange;
 use crate::ledger::{self, Balances};
+use crate::notify::{self, OrderChange, OrderEvent};
 use crate::order::BotOrder;
 use crate::pair::PairRules;
 use crate::storage::{ActionRecord, ManagerState, Storage, TickerRecord};
@@ -15,6 +16,12 @@ use crate::{BotError, BotResult};
 use kraken_api::trading::{NewOrder, OrderFlag, OrderSide, OrderStatus, OrderType, TimeInForce};
 use rust_decimal::Decimal;
 use std::collections::HashMap;
+use std::sync::Mutex;
+use trading_notify::messages::{self, Label, ManagerSummary};
+use trading_notify::{Catalog, Notification, Notifier};
+
+/// The day of the last daily summary, in the sync state
+const DAILY_SUMMARY: &str = "daily_summary_day";
 
 /// What a manager did during a tick
 #[derive(Debug, Clone, PartialEq)]
@@ -51,6 +58,9 @@ pub struct Bot<E: Exchange> {
     config: BotConfig,
     /// Pair of the configuration -> Kraken name
     pair_keys: HashMap<String, String>,
+    notifier: Notifier,
+    /// The failure last notified, per source: a failure repeated at each tick is notified once
+    failures: Mutex<HashMap<String, String>>,
 }
 
 impl<E: Exchange> Bot<E> {
@@ -60,7 +70,146 @@ impl<E: Exchange> Bot<E> {
             storage,
             config,
             pair_keys: HashMap::new(),
+            notifier: Notifier::Silent,
+            failures: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Where the notifications of the configuration go
+    pub fn with_notifier(mut self, notifier: Notifier) -> Self {
+        self.notifier = notifier;
+        self
+    }
+
+    fn texts(&self) -> &'static Catalog {
+        self.config
+            .notifications
+            .as_ref()
+            .map(|it| it.language)
+            .unwrap_or_default()
+            .catalog()
+    }
+
+    fn wants(&self, event: EventKind) -> bool {
+        self.config
+            .notifications
+            .as_ref()
+            .is_some_and(|it| it.wants(event))
+    }
+
+    async fn notify(&self, notification: Notification) {
+        if self.wants(notification.event) {
+            self.notifier.send(notification).await;
+        }
+    }
+
+    pub async fn notify_started(&self) {
+        self.notify(messages::started(
+            self.texts(),
+            self.config.managers.len(),
+            self.config.dry_run,
+        ))
+        .await;
+    }
+
+    /// Notifies a failure of `source`, unless it's the one already notified
+    pub async fn notify_failure(&self, source: &str, label: Option<&Label>, error: &str) {
+        let new = {
+            let mut failures = self.failures.lock().unwrap();
+            let known = failures.get(source).is_some_and(|it| it == error);
+            failures.insert(source.to_string(), error.to_string());
+            !known
+        };
+        if new {
+            self.notify(messages::failed(self.texts(), label, error))
+                .await;
+        }
+    }
+
+    /// `source` works again: its next failure will be notified
+    pub fn clear_failure(&self, source: &str) {
+        self.failures.lock().unwrap().remove(source);
+    }
+
+    async fn notify_order_events(
+        &self,
+        events: &[OrderEvent],
+        markets: &HashMap<String, Market>,
+    ) -> BotResult<()> {
+        for event in events {
+            let order = &event.order;
+            let Some(manager) = self
+                .config
+                .managers
+                .iter()
+                .find(|it| it.id == order.manager_id)
+            else {
+                continue;
+            };
+            let market = &markets[&self.pair_keys[&manager.pair]];
+            let label = notify::label(manager.id, &market.rules);
+            let notification = match event.change {
+                OrderChange::Filled | OrderChange::PartiallyFilled => {
+                    // what the base sold had cost: the position before the sale
+                    let before: Vec<BotOrder> = self
+                        .storage
+                        .orders_of(manager.id)?
+                        .into_iter()
+                        .filter(|it| it.open_time <= order.open_time && it.txid != order.txid)
+                        .collect();
+                    let entry = ledger::compute(manager.budget, &before).entry_price;
+                    messages::filled(self.texts(), &label, &notify::view(order), entry)
+                }
+                OrderChange::Ended => messages::ended(self.texts(), &label, &notify::view(order)),
+            };
+            self.notify(notification).await;
+        }
+        Ok(())
+    }
+
+    /// Once a day, after the hour of the configuration
+    async fn notify_daily_summary(&self, markets: &HashMap<String, Market>) -> BotResult<()> {
+        let Some(notifications) = &self.config.notifications else {
+            return Ok(());
+        };
+        if !notifications.wants(EventKind::DailySummary) || self.config.managers.is_empty() {
+            return Ok(());
+        }
+        let now = self.exchange.now();
+        let day = (now / 86_400.0).floor() as i64;
+        let hour = ((now.rem_euclid(86_400.0)) / 3600.0).floor() as u32;
+        if hour < notifications.daily_summary_hour
+            || self.storage.state(DAILY_SUMMARY)? == Some(day.to_string())
+        {
+            return Ok(());
+        }
+
+        let mut summaries = Vec::new();
+        for manager in &self.config.managers {
+            let market = &markets[&self.pair_keys[&manager.pair]];
+            let value = match self.storage.manager_balances(manager.id)? {
+                Some((balances, price, _)) => balances.value(price),
+                None => manager.budget,
+            };
+            let sales = self
+                .storage
+                .orders_of(manager.id)?
+                .iter()
+                .filter(|it| it.side == OrderSide::Sell && !it.volume_executed.is_zero())
+                .filter(|it| it.close_time.is_some_and(|time| time > now - 86_400.0))
+                .count();
+            summaries.push(ManagerSummary {
+                label: notify::label(manager.id, &market.rules),
+                budget: manager.budget,
+                value,
+                sales,
+            });
+        }
+
+        self.notify(messages::daily_summary(self.texts(), &summaries))
+            .await;
+        self.storage.set_state(DAILY_SUMMARY, &day.to_string())?;
+        Ok(())
     }
 
     pub fn exchange(&self) -> &E {
@@ -163,6 +312,7 @@ impl<E: Exchange> Bot<E> {
             self.exchange.now(),
         )
         .await?;
+        self.notify_order_events(&sync.events, &markets).await?;
 
         // what the account has, decreased locally when orders are placed
         let mut available: HashMap<String, Decimal> = self
@@ -183,9 +333,17 @@ impl<E: Exchange> Bot<E> {
                     Outcome::Failed(error.to_string())
                 }
             };
+            let source = format!("manager {}", manager.id);
+            if let Outcome::Failed(error) = &outcome {
+                let label = notify::label(manager.id, &market.rules);
+                self.notify_failure(&source, Some(&label), error).await;
+            } else {
+                self.clear_failure(&source);
+            }
             outcomes.insert(manager.id, outcome);
         }
 
+        self.notify_daily_summary(&markets).await?;
         Ok(TickReport { sync, outcomes })
     }
 
@@ -371,6 +529,25 @@ impl<E: Exchange> Bot<E> {
                     }])?;
                 }
                 tracing::info!(manager = manager.id, order = %answer.description.order, ?txid, dry_run, "order accepted");
+                let notify_dry_run = self
+                    .config
+                    .notifications
+                    .as_ref()
+                    .is_some_and(|it| it.dry_run);
+                if !dry_run || notify_dry_run {
+                    let expires = (side == OrderSide::Buy).then_some(self.config.buy_order_timeout);
+                    let label = notify::label(manager.id, &market.rules);
+                    self.notify(messages::placed(
+                        self.texts(),
+                        &label,
+                        notify::side(side),
+                        amount,
+                        price,
+                        dry_run,
+                        expires,
+                    ))
+                    .await;
+                }
                 record.txid = txid.clone();
                 self.storage.record_action(&record)?;
                 Ok(Outcome::Placed {

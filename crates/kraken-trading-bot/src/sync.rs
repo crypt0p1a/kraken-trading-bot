@@ -7,6 +7,7 @@
 //! 4. the orders still open in the database but in none of the above, queried one by one
 
 use crate::exchange::Exchange;
+use crate::notify::{OrderEvent, change};
 use crate::order::BotOrder;
 use crate::storage::Storage;
 use crate::{BotError, BotResult};
@@ -26,6 +27,23 @@ pub struct SyncReport {
     pub open: usize,
     /// Userrefs of open orders which belong to no configured manager
     pub orphans: BTreeSet<i64>,
+    /// What changed in the orders known before: fills, expiries, cancellations
+    pub events: Vec<OrderEvent>,
+}
+
+/// Saves the orders, noting what changed in the ones known before
+fn track(storage: &Storage, orders: &[BotOrder], events: &mut Vec<OrderEvent>) -> BotResult<()> {
+    for order in orders {
+        let previous = storage.order(&order.txid)?;
+        if let Some(change) = change(previous.as_ref(), order) {
+            events.push(OrderEvent {
+                change,
+                order: order.clone(),
+            });
+        }
+    }
+    storage.upsert_orders(orders)?;
+    Ok(())
 }
 
 fn backfilled(id: i32) -> String {
@@ -78,7 +96,7 @@ pub async fn synchronize<E: Exchange>(
     let open = of_managers(&open, ids);
     let open_txids: HashSet<String> = open.iter().map(|it| it.txid.clone()).collect();
     report.open = open.len();
-    storage.upsert_orders(&open)?;
+    track(storage, &open, &mut report.events)?;
     report.updated += open.len();
 
     // 2. the history of the managers seen for the first time
@@ -98,7 +116,7 @@ pub async fn synchronize<E: Exchange>(
         )
         .await?;
         let orders = of_managers(&history, ids);
-        storage.upsert_orders(&orders)?;
+        track(storage, &orders, &mut report.events)?;
         report.updated += orders.len();
         seen.extend(orders.into_iter().map(|it| it.txid));
         storage.set_state(&backfilled(id), &now.to_string())?;
@@ -119,7 +137,7 @@ pub async fn synchronize<E: Exchange>(
         )
         .await?;
         let orders = of_managers(&recent, ids);
-        storage.upsert_orders(&orders)?;
+        track(storage, &orders, &mut report.events)?;
         report.updated += orders.len();
         seen.extend(orders.into_iter().map(|it| it.txid));
     }
@@ -133,7 +151,7 @@ pub async fn synchronize<E: Exchange>(
         .collect();
     if !dangling.is_empty() {
         let queried = of_managers(&exchange.query_orders(&dangling).await?, ids);
-        storage.upsert_orders(&queried)?;
+        track(storage, &queried, &mut report.events)?;
         report.updated += queried.len();
         let found: HashSet<_> = queried.iter().map(|it| it.txid.as_str()).collect();
         for txid in dangling.iter().filter(|it| !found.contains(it.as_str())) {

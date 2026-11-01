@@ -8,6 +8,15 @@ tick_interval: 5m
 # a buy order not filled after this delay expires, and is placed again from the new price
 buy_order_timeout: 12h
 
+# notifications on the phone, through ntfy (topic in KRAKEN_BOT_NTFY_TOPIC):
+# notifications:
+#   ntfy:
+#     server: https://ntfy.sh        # or a self-hosted server
+#   language: en                     # en (default) or fr
+#   events: [started, placed, filled, expired, failed, daily_summary]   # all by default
+#   dry_run: false                   # true: also the orders of a dry run
+#   daily_summary_hour: 20           # UTC
+
 managers:
   # id: Kraken userref of the orders of the manager, from 1 to 2147483647, unique, never reused
   # budget: in the quote currency of the pair (USD for XBTUSD)

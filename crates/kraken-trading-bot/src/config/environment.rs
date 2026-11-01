@@ -11,6 +11,10 @@ pub struct Environment {
     pub config_path: PathBuf,
     /// KRAKEN_BOT_DATABASE, `kraken-bot.sqlite` by default
     pub database_path: PathBuf,
+    /// KRAKEN_BOT_NTFY_TOPIC: whoever knows it reads the notifications
+    pub ntfy_topic: Option<String>,
+    /// KRAKEN_BOT_NTFY_TOKEN: access token of a protected topic
+    pub ntfy_token: Option<String>,
 }
 
 impl std::fmt::Debug for Environment {
@@ -21,6 +25,8 @@ impl std::fmt::Debug for Environment {
             .field("api_secret", &"***")
             .field("config_path", &self.config_path)
             .field("database_path", &self.database_path)
+            .field("ntfy_topic", &self.ntfy_topic.as_ref().map(|_| "***"))
+            .field("ntfy_token", &self.ntfy_token.as_ref().map(|_| "***"))
             .finish()
     }
 }
@@ -55,6 +61,8 @@ impl Environment {
                 .to_path_buf(),
             database_path: Path::new(get("KRAKEN_BOT_DATABASE").unwrap_or("kraken-bot.sqlite"))
                 .to_path_buf(),
+            ntfy_topic: get("KRAKEN_BOT_NTFY_TOPIC").map(str::to_string),
+            ntfy_token: get("KRAKEN_BOT_NTFY_TOKEN").map(str::to_string),
         })
     }
 }
@@ -132,13 +140,16 @@ mod tests {
         let environment = Environment::from_variables(&variables(&[
             ("KRAKEN_API_KEY", "the-key"),
             ("KRAKEN_API_SECRET", "the-secret"),
+            ("KRAKEN_BOT_NTFY_TOPIC", "the-topic"),
+            ("KRAKEN_BOT_NTFY_TOKEN", "the-token"),
         ]))
         .unwrap();
+        assert_eq!(environment.ntfy_topic.as_deref(), Some("the-topic"));
+        assert_eq!(environment.ntfy_token.as_deref(), Some("the-token"));
         let printed = format!("{environment:?}");
-        assert!(
-            !printed.contains("the-key") && !printed.contains("the-secret"),
-            "{printed}"
-        );
+        for secret in ["the-key", "the-secret", "the-topic", "the-token"] {
+            assert!(!printed.contains(secret), "{printed}");
+        }
     }
 
     #[test]

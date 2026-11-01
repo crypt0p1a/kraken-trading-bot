@@ -4,4 +4,7 @@ mod environment;
 mod managers;
 
 pub use environment::Environment;
-pub use managers::{BotConfig, ConfigError, ManagerConfig, ManagerMode};
+pub use managers::{
+    BotConfig, ConfigError, EventKind, Language, ManagerConfig, ManagerMode, NotificationsConfig,
+    NtfyConfig,
+};

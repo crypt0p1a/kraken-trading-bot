@@ -16,6 +16,7 @@ use kraken_trading_bot::exchange::KrakenExchange;
 use kraken_trading_bot::storage::Storage;
 use std::process::ExitCode;
 use tracing_subscriber::EnvFilter;
+use trading_notify::Notifier;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Mode {
@@ -77,6 +78,7 @@ async fn run(mode: Mode) -> Result<(), String> {
         "starting"
     );
 
+    let notifier = notifier(&config, &environment)?;
     let storage = Storage::open(&environment.database_path).map_err(|error| error.to_string())?;
     let exchange = KrakenExchange::new(
         environment.api_key,
@@ -84,19 +86,21 @@ async fn run(mode: Mode) -> Result<(), String> {
         RestOptions::default(),
     )
     .map_err(|error| error.to_string())?;
-    let mut bot = Bot::new(exchange, storage, config);
+    let mut bot = Bot::new(exchange, storage, config).with_notifier(notifier);
     bot.prepare().await.map_err(|error| error.to_string())?;
 
     if mode == Mode::Check {
         tracing::info!("the configuration and the pairs are valid");
         return Ok(());
     }
+    bot.notify_started().await;
 
     let interval = bot.config().tick_interval;
     let mut shutdown = std::pin::pin!(shutdown());
     loop {
         match bot.tick().await {
             Ok(report) => {
+                bot.clear_failure("tick");
                 let failed = report
                     .outcomes
                     .values()
@@ -109,7 +113,10 @@ async fn run(mode: Mode) -> Result<(), String> {
                     "tick done"
                 );
             }
-            Err(error) => tracing::error!(%error, "tick failed, retried at the next one"),
+            Err(error) => {
+                tracing::error!(%error, "tick failed, retried at the next one");
+                bot.notify_failure("tick", None, &error.to_string()).await;
+            }
         }
 
         if mode == Mode::Once {
@@ -124,6 +131,23 @@ async fn run(mode: Mode) -> Result<(), String> {
             }
         }
     }
+}
+
+/// The ntfy topic of the configuration: required when notifications are configured
+fn notifier(config: &BotConfig, environment: &Environment) -> Result<Notifier, String> {
+    let Some(notifications) = &config.notifications else {
+        return Ok(Notifier::Silent);
+    };
+    let topic = environment
+        .ntfy_topic
+        .as_deref()
+        .ok_or("notifications are configured: KRAKEN_BOT_NTFY_TOPIC is required")?;
+    tracing::info!(server = %notifications.ntfy.server, language = ?notifications.language, "notifications through ntfy");
+    Notifier::ntfy(
+        &notifications.ntfy.server,
+        topic,
+        environment.ntfy_token.as_deref(),
+    )
 }
 
 /// SIGTERM (docker stop) or Ctrl-C

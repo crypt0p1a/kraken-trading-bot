@@ -10,6 +10,8 @@ pub struct PairRules {
     pub key: String,
     /// Alternate name, given to AddOrder and written in the orders, e.g. "XBTUSD"
     pub altname: String,
+    /// Asset of the base, e.g. "XXBT"
+    pub base_asset: String,
     /// Asset of the quote, key of the balances, e.g. "ZUSD"
     pub quote_asset: String,
     /// Decimals of the price
@@ -30,6 +32,7 @@ impl PairRules {
         Self {
             key: key.to_string(),
             altname: pair.altname.clone(),
+            base_asset: pair.base.clone(),
             quote_asset: pair.quote.clone(),
             price_decimals,
             tick_size: pair
@@ -42,7 +45,18 @@ impl PairRules {
             costmin: pair.costmin.map(dec).unwrap_or_default(),
         }
     }
+}
 
+/// The usual name of a Kraken asset: "XXBT" -> "XBT", "ZUSD" -> "USD", "SOL" -> "SOL"
+pub fn display_asset(asset: &str) -> &str {
+    if asset.len() == 4 && (asset.starts_with('X') || asset.starts_with('Z')) {
+        &asset[1..]
+    } else {
+        asset
+    }
+}
+
+impl PairRules {
     /// Whether `name` designates this pair: Kraken name, alternate name or WebSocket name
     pub fn matches(name: &str, key: &str, pair: &AssetPair) -> bool {
         let name = name.trim();
@@ -73,6 +87,7 @@ mod tests {
     fn reads_the_constraints_of_the_pair() {
         let rules = PairRules::from_asset_pair("XXBTZUSD", &pair(Some(0.1)));
         assert_eq!(rules.altname, "XBTUSD");
+        assert_eq!(rules.base_asset, "XXBT");
         assert_eq!(rules.quote_asset, "ZUSD");
         assert_eq!(rules.price_decimals, 1);
         assert_eq!(rules.tick_size, Decimal::from_str("0.1").unwrap());
@@ -85,6 +100,21 @@ mod tests {
     fn the_tick_defaults_to_the_decimals_of_the_price() {
         let rules = PairRules::from_asset_pair("XXBTZUSD", &pair(None));
         assert_eq!(rules.tick_size, Decimal::from_str("0.1").unwrap());
+    }
+
+    #[test]
+    fn displays_the_assets_by_their_usual_name() {
+        for (asset, name) in [
+            ("XXBT", "XBT"),
+            ("ZUSD", "USD"),
+            ("XETH", "ETH"),
+            ("ZEUR", "EUR"),
+            ("SOL", "SOL"),
+            ("USDC", "USDC"),
+            ("XTZ", "XTZ"),
+        ] {
+            assert_eq!(display_asset(asset), name, "{asset}");
+        }
     }
 
     #[test]
