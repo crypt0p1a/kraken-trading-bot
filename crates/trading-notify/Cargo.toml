@@ -1,0 +1,20 @@
+[package]
+name = "trading-notify"
+description = "Push notifications of a trading bot on the phone, through ntfy, in several languages"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ntfy.workspace = true
+reqwest.workspace = true
+rust_decimal.workspace = true
+serde.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+serde_norway.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+wiremock.workspace = true
