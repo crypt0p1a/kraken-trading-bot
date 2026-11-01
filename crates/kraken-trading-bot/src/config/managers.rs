@@ -400,7 +400,7 @@ managers: []",
 
     #[test]
     fn reads_the_example_of_the_repository() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("managers.example.yaml");
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../managers.example.yaml");
         let config = BotConfig::load(&path).unwrap();
         assert!(config.dry_run, "the example must stay a dry run");
         assert!(!config.managers.is_empty());

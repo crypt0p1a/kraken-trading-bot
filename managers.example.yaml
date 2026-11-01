@@ -1,4 +1,5 @@
-# Configuration of the managers of kraken-trading-bot
+# Configuration of the managers of kraken-trading-bot: copy it to managers.yaml (ignored by git)
+# and edit it. The bot reads managers.yaml (KRAKEN_BOT_CONFIG to read another file).
 # The credentials are never written here: KRAKEN_API_KEY / KRAKEN_API_SECRET in the environment
 
 # true: the orders are only validated by Kraken, never placed. Set it to false to trade for real

@@ -1,4 +1,4 @@
-# Runs the bot: copy crates/kraken-trading-bot/managers.example.yaml to managers.yaml, put
+# Runs the bot: copy managers.example.yaml to managers.yaml, put
 # KRAKEN_API_KEY / KRAKEN_API_SECRET in .env, then
 #
 #   docker compose up -d --build
