@@ -84,8 +84,11 @@ virtual_managers:
   first buy, `sell_above` from the last sell and the cost of what it sold, `buy_below` from the
   last buy and the price of the market when it was placed (the public trades of Kraken). A
   parameter the orders contradict, the copied manager having changed, is taken from the orders.
-  A virtual manager whose copied manager is gone is rebuilt `closing`; one which holds nothing is
-  rebuilt deleted, its id staying taken.
+  A virtual manager which holds nothing (no open order, nothing to sell) is rebuilt deleted, its
+  id staying taken. One whose copied manager is gone is rebuilt `closing`: it ends its open
+  order, sells what it holds, then is deleted. Without its copied manager nor any sell, nothing
+  says at what price to sell: it's left untouched (its orders reported as orphans) for you to
+  handle.
 - They are stored in the `virtual_managers` table of the database, deleted ones included.
 
 ## Running it

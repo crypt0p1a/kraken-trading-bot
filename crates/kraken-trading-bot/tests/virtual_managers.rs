@@ -462,3 +462,60 @@ async fn searches_the_orders_of_kraken_once_per_database() {
     bot.tick().await.unwrap();
     assert_eq!(bot.storage().virtual_ids().unwrap(), vec![VIRTUAL]);
 }
+
+#[tokio::test]
+async fn a_closing_virtual_manager_is_deleted_once_it_sold_everything() {
+    let bot = selling_virtual_manager().await;
+    let mut bot = restart(
+        bot,
+        "\n  - {id: 2, pair: ETHUSD, budget: 20, buy_below: 2, sell_above: 3}",
+    )
+    .await;
+    // closing: it waits for its sell
+    assert_eq!(outcome(&mut bot, VIRTUAL).await, Outcome::Waited);
+
+    // sold: it doesn't buy again, and is gone
+    let sell_price = bot
+        .storage()
+        .orders_of(VIRTUAL)
+        .unwrap()
+        .into_iter()
+        .find(|it| it.side == OrderSide::Sell)
+        .unwrap()
+        .limit_price
+        .unwrap();
+    bot.exchange().set_price(BTC, sell_price);
+    let outcome = outcome(&mut bot, VIRTUAL).await;
+    assert!(matches!(outcome, Outcome::Deleted(_)), "{outcome:?}");
+    assert!(
+        bot.storage()
+            .virtual_managers()
+            .unwrap()
+            .iter()
+            .all(|it| it.config.id != VIRTUAL)
+    );
+}
+
+#[tokio::test]
+async fn a_virtual_manager_without_a_sell_nor_its_copied_manager_is_left_untouched() {
+    // its buy open, its copied manager gone: nothing says at what price to sell
+    let bot = with_a_virtual_manager().await;
+    let mut bot = restart(
+        bot,
+        "\n  - {id: 2, pair: ETHUSD, budget: 20, buy_below: 2, sell_above: 3}",
+    )
+    .await;
+    let report = bot.tick().await.unwrap();
+
+    assert!(!report.outcomes.contains_key(&VIRTUAL));
+    // its id stays taken, its order is left to Kraken
+    assert!(bot.storage().virtual_ids().unwrap().contains(&VIRTUAL));
+    assert!(report.sync.orphans.contains(&(VIRTUAL as i64)));
+    let open = bot
+        .exchange()
+        .orders()
+        .into_iter()
+        .filter(|it| it.userref == Some(VIRTUAL as i64) && it.status == OrderStatus::Open)
+        .count();
+    assert_eq!(open, 1);
+}

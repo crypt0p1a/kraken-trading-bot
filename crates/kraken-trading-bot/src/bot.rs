@@ -560,6 +560,12 @@ impl<E: Exchange> Bot<E> {
 
         match action {
             Action::Wait => Ok(Outcome::Waited),
+            // closing, with nothing left to sell: a virtual manager is done
+            Action::Idle(reason)
+                if self.is_virtual(manager) && manager.mode == ManagerMode::Closing =>
+            {
+                self.delete_virtual(manager, format!("{reason}, nothing left to sell"))
+            }
             Action::Idle(reason) => self.idle(manager, reason),
             Action::Sell { amount, price } => {
                 self.place(manager, market, OrderSide::Sell, amount, price, &balances)
@@ -594,12 +600,7 @@ impl<E: Exchange> Bot<E> {
     /// The account can't pay for the buy of the manager, which holds nothing: a virtual manager is
     /// deleted after `STARVED_TICKS` ticks in a row, its money going back to the margin
     fn starve(&self, manager: &ManagerConfig, reason: String) -> BotResult<Outcome> {
-        let is_virtual = self
-            .config
-            .virtual_managers
-            .as_ref()
-            .is_some_and(|it| it.is_virtual(manager.id));
-        if !is_virtual {
+        if !self.is_virtual(manager) {
             return self.idle(manager, reason);
         }
 
@@ -617,7 +618,18 @@ impl<E: Exchange> Bot<E> {
             return self.idle(manager, format!("{reason} ({count}/{STARVED_TICKS})"));
         }
 
-        let reason = format!("{reason}, {count} ticks in a row");
+        self.delete_virtual(manager, format!("{reason}, {count} ticks in a row"))
+    }
+
+    fn is_virtual(&self, manager: &ManagerConfig) -> bool {
+        self.config
+            .virtual_managers
+            .as_ref()
+            .is_some_and(|it| it.is_virtual(manager.id))
+    }
+
+    /// Deletes a virtual manager which holds nothing: its id is never reused
+    fn delete_virtual(&self, manager: &ManagerConfig, reason: String) -> BotResult<Outcome> {
         let at = now_millis();
         self.storage
             .delete_virtual_manager(manager.id, at, &reason)?;
