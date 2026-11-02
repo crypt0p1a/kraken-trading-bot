@@ -4,7 +4,9 @@
 budget on one pair, with **limit orders only**, in a loop:
 
 1. buys with everything it has at **-`buy_below`%** of the last price (GTD order: not filled
-   after `buy_order_timeout`, it expires and is placed again from the new price)
+   after `buy_order_timeout`, it expires and is placed again from the new price; with
+   `buy_trailing`, it's placed again as soon as the price rose `buy_trailing`% above the one it was
+   placed from)
 2. sells everything it bought for **what it cost + `sell_above`%**, fees included (GTC order)
 3. starts again with what the sale brought: every cycle ends with more than it started with
 
@@ -27,6 +29,7 @@ the credentials in the environment:
 dry_run: true              # orders only validated by Kraken, never placed: false to trade
 tick_interval: 5m
 buy_order_timeout: 12h
+buy_trailing: 0.5          # optional: a buy left behind by a rise of 0.5% is placed again
 managers:
   - id: 1                  # userref of its orders: 1 to 2147483647, unique, never reused
     pair: XBTUSD           # or XBT/USD, XXBTZUSD
@@ -170,6 +173,7 @@ docker run --rm -v kraken-rust_kraken-bot-data:/data -it keinos/sqlite3 sqlite3 
 - `scenarios.rs`: the bot tick after tick on a simulated Kraken (fills, expiry, partial fills,
   closing managers, missing funds, orphans, restart without database, refused orders, dry run,
   600 ticks of a random market where every cycle makes money, only limit orders)
+- `trailing_buy.rs`: the buys placed again when the price rises, only the ones not filled at all
 - `virtual_managers.rs`: the virtual managers on a simulated Kraken (added with the margin,
   deleted without money or once closed, rebuilt after the loss of the database)
 - `kraken_wiring.rs`: the requests sent to a mocked Kraken

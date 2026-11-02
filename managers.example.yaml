@@ -8,6 +8,9 @@ dry_run: true
 tick_interval: 5m
 # a buy order not filled after this delay expires, and is placed again from the new price
 buy_order_timeout: 12h
+# a buy not filled at all is cancelled, then placed again from the new price, once the price rose
+# this % above the one it was placed from (missing: it waits for buy_order_timeout)
+# buy_trailing: 0.5
 
 # notifications on the phone, through ntfy (topic in KRAKEN_BOT_NTFY_TOPIC):
 # notifications:
