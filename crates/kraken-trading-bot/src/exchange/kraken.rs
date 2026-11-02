@@ -1,6 +1,6 @@
 use super::{Exchange, ExchangeResult};
 use kraken_api::account::{ExtendedBalance, TradeVolume};
-use kraken_api::market::{AssetPair, Ticker};
+use kraken_api::market::{AssetPair, PublicTrade, RecentTradesRequest, Ticker};
 use kraken_api::trading::{
     ClosedOrders, ClosedOrdersRequest, NewOrder, NewOrderAnswer, OpenOrdersRequest, Order,
     QueryOrdersRequest,
@@ -36,6 +36,16 @@ impl Exchange for KrakenExchange {
 
     async fn tickers(&self, pairs: &[String]) -> ExchangeResult<HashMap<String, Ticker>> {
         self.public.tickers(pairs).await
+    }
+
+    async fn trades(&self, pair: &str, since: f64) -> ExchangeResult<Vec<PublicTrade>> {
+        let request = RecentTradesRequest {
+            pair: pair.to_string(),
+            since: Some((since.floor() as i64).to_string()),
+            count: None,
+            asset_class: None,
+        };
+        Ok(self.public.recent_trades(&request).await?.trades)
     }
 
     async fn trade_volume(&self, pairs: &[String]) -> ExchangeResult<TradeVolume> {

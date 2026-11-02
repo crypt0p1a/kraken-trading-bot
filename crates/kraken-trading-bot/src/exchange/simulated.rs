@@ -1,7 +1,9 @@
 use super::{Exchange, ExchangeResult};
 use kraken_api::KrakenError;
 use kraken_api::account::{ExtendedBalance, FeeInfo, TradeVolume};
-use kraken_api::market::{AssetPair, PriceLevel, Ticker, TradeLevel, Window, WindowCount};
+use kraken_api::market::{
+    AssetPair, PriceLevel, PublicTrade, Ticker, TradeLevel, Window, WindowCount,
+};
 use kraken_api::trading::{
     CloseTime, ClosedOrders, ClosedOrdersRequest, NewOrder, NewOrderAnswer, NewOrderDescription,
     Order, OrderDescription, OrderSide, OrderStatus, OrderType, TimeInForce,
@@ -21,6 +23,8 @@ struct State {
     /// Kraken name -> pair
     pairs: HashMap<String, AssetPair>,
     prices: HashMap<String, Decimal>,
+    /// Kraken name -> every price it had, with its time, oldest first
+    history: HashMap<String, Vec<(f64, Decimal)>>,
     balances: HashMap<String, Decimal>,
     /// Percent, e.g. 0.25
     fee_percent: Decimal,
@@ -45,6 +49,7 @@ impl SimulatedExchange {
             state: Mutex::new(State {
                 pairs: HashMap::new(),
                 prices: HashMap::new(),
+                history: HashMap::new(),
                 balances: HashMap::new(),
                 fee_percent: Decimal::new(25, 2),
                 orders: Vec::new(),
@@ -70,6 +75,8 @@ impl SimulatedExchange {
         let mut state = self.state();
         state.pairs.insert(key.into(), pair);
         state.prices.insert(key.into(), price);
+        let now = state.now;
+        state.history.insert(key.into(), vec![(now, price)]);
     }
 
     pub fn set_fee_percent(&self, fee: Decimal) {
@@ -110,6 +117,12 @@ impl SimulatedExchange {
     pub fn set_price(&self, key: &str, price: Decimal) {
         let mut state = self.state();
         state.prices.insert(key.into(), price);
+        let now = state.now;
+        state
+            .history
+            .entry(key.into())
+            .or_default()
+            .push((now, price));
         let altname = state.pairs[key].altname.clone();
         let txids: Vec<String> = state
             .orders
@@ -378,6 +391,33 @@ impl Exchange for SimulatedExchange {
                 };
                 (key, ticker)
             })
+            .collect())
+    }
+
+    /// A trade at `since` at the price of then, then one at each change of the price
+    async fn trades(&self, pair: &str, since: f64) -> ExchangeResult<Vec<PublicTrade>> {
+        let state = self.state();
+        let history = state.history.get(pair).cloned().unwrap_or_default();
+        let then = history
+            .iter()
+            .rev()
+            .find(|(time, _)| *time <= since)
+            .or(history.first())
+            .map(|(_, price)| (since, *price));
+        let trade = |(index, (time, price)): (usize, (f64, Decimal))| PublicTrade {
+            price,
+            volume: Decimal::ONE,
+            time,
+            side: OrderSide::Buy,
+            order_type: OrderType::Market,
+            miscellaneous: String::new(),
+            trade_id: index as i64,
+        };
+        Ok(then
+            .into_iter()
+            .chain(history.into_iter().filter(|(time, _)| *time > since))
+            .enumerate()
+            .map(trade)
             .collect())
     }
 

@@ -9,7 +9,7 @@ pub use simulated::SimulatedExchange;
 
 use kraken_api::KrakenError;
 use kraken_api::account::{ExtendedBalance, TradeVolume};
-use kraken_api::market::{AssetPair, Ticker};
+use kraken_api::market::{AssetPair, PublicTrade, Ticker};
 use kraken_api::trading::{ClosedOrders, ClosedOrdersRequest, NewOrder, NewOrderAnswer, Order};
 use std::collections::HashMap;
 
@@ -27,6 +27,9 @@ pub trait Exchange {
 
     /// The tickers, keyed by Kraken name
     async fn tickers(&self, pairs: &[String]) -> ExchangeResult<HashMap<String, Ticker>>;
+
+    /// Trades of the pair from `since` (UTC seconds), oldest first: a page of them, the first ones
+    async fn trades(&self, pair: &str, since: f64) -> ExchangeResult<Vec<PublicTrade>>;
 
     /// The fees of the pairs, keyed by Kraken name
     async fn trade_volume(&self, pairs: &[String]) -> ExchangeResult<TradeVolume>;
