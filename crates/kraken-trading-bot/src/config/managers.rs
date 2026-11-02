@@ -57,6 +57,10 @@ pub struct BotConfig {
     /// A buy order not filled after this delay expires, and is placed again from the new price
     #[serde(default = "default_buy_order_timeout", with = "humantime_serde")]
     pub buy_order_timeout: Duration,
+    /// A buy not filled at all is cancelled, then placed again from the new price, once the price
+    /// is this % above the one it was placed from. Never when missing: it waits for its timeout
+    #[serde(default)]
+    pub buy_trailing: Option<Decimal>,
     /// Push notifications, none when missing
     #[serde(default)]
     pub notifications: Option<NotificationsConfig>,
@@ -218,6 +222,10 @@ impl BotConfig {
                 "buy_order_timeout must be at least 1m, got {:?}",
                 self.buy_order_timeout
             ));
+        }
+
+        if self.buy_trailing.is_some_and(|it| it <= Decimal::ZERO) {
+            return invalid("buy_trailing must be > 0".into());
         }
 
         if let Some(notifications) = &self.notifications {
@@ -476,6 +484,15 @@ managers: []",
                 "{yaml}"
             );
         }
+    }
+
+    #[test]
+    fn reads_the_trailing_of_the_buys() {
+        let config = BotConfig::parse("buy_trailing: 0.5\nmanagers: []").unwrap();
+        assert_eq!(config.buy_trailing, Some(Decimal::new(5, 1)));
+        assert_eq!(BotConfig::parse("managers: []").unwrap().buy_trailing, None);
+        assert!(BotConfig::parse("buy_trailing: 0\nmanagers: []").is_err());
+        assert!(BotConfig::parse("buy_trailing: -1\nmanagers: []").is_err());
     }
 
     #[test]

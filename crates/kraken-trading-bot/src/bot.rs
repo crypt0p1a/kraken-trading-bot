@@ -43,6 +43,8 @@ pub enum Outcome {
     Failed(String),
     /// A virtual manager deleted: it held nothing, and the account couldn't pay for its buy
     Deleted(String),
+    /// Its buy cancelled, the price having risen too far above it: placed again at the next tick
+    Cancelled(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -543,6 +545,9 @@ impl<E: Exchange> Bot<E> {
         log_balances(manager, &state);
 
         let open: Vec<&BotOrder> = orders.iter().filter(|it| !it.is_final()).collect();
+        if let Some(outcome) = self.trail_buy(manager, market, &open).await? {
+            return Ok(outcome);
+        }
         for order in &open {
             tracing::info!(manager = manager.id, txid = %order.txid, side = ?order.side, "waiting for its open order");
         }
@@ -647,6 +652,67 @@ impl<E: Exchange> Bot<E> {
         self.starved.lock().unwrap().remove(&manager.id);
         tracing::info!(manager = manager.id, %reason, "virtual manager deleted");
         Ok(Outcome::Deleted(reason))
+    }
+
+    /// Cancels the open buy, not filled at all, once the price is `buy_trailing`% above the price
+    /// it was placed from. The next tick sees it cancelled, and places the buy again from the new
+    /// price: nothing is bought twice, even if the buy was filled meanwhile
+    async fn trail_buy(
+        &self,
+        manager: &ManagerConfig,
+        market: &Market,
+        open: &[&BotOrder],
+    ) -> BotResult<Option<Outcome>> {
+        let Some(trailing) = self.config.buy_trailing else {
+            return Ok(None);
+        };
+        let Some((order, limit)) = open
+            .iter()
+            .filter(|it| it.side == OrderSide::Buy && it.volume_executed.is_zero())
+            .find_map(|it| it.limit_price.map(|limit| (it, limit)))
+        else {
+            return Ok(None);
+        };
+        // the buy was placed at -buy_below% of this price
+        let below = Decimal::ONE - percent(manager.buy_below);
+        if below <= Decimal::ZERO {
+            return Ok(None);
+        }
+        let placed_from = limit / below;
+        if market.reference <= placed_from * (Decimal::ONE + percent(trailing)) {
+            return Ok(None);
+        }
+
+        let reason = format!(
+            "price {} more than {trailing}% above {}, the price the buy was placed from",
+            market.reference.normalize(),
+            placed_from.round_dp(8).normalize()
+        );
+        let mut record = ActionRecord {
+            manager_id: manager.id,
+            at: now_millis(),
+            kind: "buy_cancelled".into(),
+            amount: Some(order.volume),
+            price: Some(limit),
+            reason: Some(reason.clone()),
+            dry_run: self.config.dry_run,
+            txid: Some(order.txid.clone()),
+            error: None,
+        };
+        match self.exchange.cancel_order(&order.txid).await {
+            Ok(()) => {
+                tracing::info!(manager = manager.id, txid = %order.txid, %reason, "buy cancelled");
+                self.storage.record_action(&record)?;
+                Ok(Some(Outcome::Cancelled(reason)))
+            }
+            // filled or ended meanwhile: the next synchronization tells
+            Err(error) => {
+                tracing::warn!(manager = manager.id, txid = %order.txid, %error, "the buy couldn't be cancelled");
+                record.error = Some(error.to_string());
+                self.storage.record_action(&record)?;
+                Ok(None)
+            }
+        }
     }
 
     /// Records the reason, unless it's the same as the last action of the manager
