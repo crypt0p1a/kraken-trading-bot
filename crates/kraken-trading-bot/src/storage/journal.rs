@@ -1,5 +1,6 @@
 use super::{Result, Storage};
-use rusqlite::params;
+use crate::market::Indicators;
+use rusqlite::{OptionalExtension, params};
 use rust_decimal::Decimal;
 
 /// A decision of a manager, and what came of it
@@ -110,6 +111,56 @@ impl Storage {
         Ok(())
     }
 
+    /// The indicators of the pair at a tick (UTC milliseconds)
+    pub fn record_indicators(&self, pair: &str, at: i64, indicators: &Indicators) -> Result<()> {
+        self.connection.execute(
+            "INSERT OR REPLACE INTO indicators (pair, at, close, atr_percent, ema_fast, ema_slow,
+                slope_24h_percent, range_24h_percent, change_24h_percent, candles)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                pair,
+                at,
+                indicators.close,
+                indicators.atr_percent,
+                indicators.ema_fast,
+                indicators.ema_slow,
+                indicators.slope_24h_percent,
+                indicators.range_24h_percent,
+                indicators.change_24h_percent,
+                indicators.candles as i64,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// The last indicators of the pair, with their time
+    pub fn last_indicators(&self, pair: &str) -> Result<Option<(i64, Indicators)>> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT at, close, atr_percent, ema_fast, ema_slow, slope_24h_percent,
+                    range_24h_percent, change_24h_percent, candles
+                 FROM indicators WHERE pair = ?1 ORDER BY at DESC LIMIT 1",
+                [pair],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        Indicators {
+                            close: row.get(1)?,
+                            atr_percent: row.get(2)?,
+                            ema_fast: row.get(3)?,
+                            ema_slow: row.get(4)?,
+                            slope_24h_percent: row.get(5)?,
+                            range_24h_percent: row.get(6)?,
+                            change_24h_percent: row.get(7)?,
+                            candles: row.get::<_, i64>(8)? as usize,
+                        },
+                    ))
+                },
+            )
+            .optional()?)
+    }
+
     pub fn ticker_count(&self, pair: &str) -> Result<usize> {
         Ok(self.connection.query_row(
             "SELECT COUNT(*) FROM tickers WHERE pair = ?1",
@@ -184,5 +235,32 @@ mod tests {
             .record_ticker(&TickerRecord { at: 2, ..ticker })
             .unwrap();
         assert_eq!(storage.ticker_count("XXBTZUSD").unwrap(), 2);
+    }
+
+    #[test]
+    fn records_the_indicators() {
+        let storage = Storage::open_in_memory().unwrap();
+        assert_eq!(storage.last_indicators("XXBTZEUR").unwrap(), None);
+        let indicators = |close: f64| Indicators {
+            close,
+            atr_percent: 0.4,
+            ema_fast: 101.0,
+            ema_slow: 100.0,
+            slope_24h_percent: 1.5,
+            range_24h_percent: 3.2,
+            change_24h_percent: 1.1,
+            candles: 96,
+        };
+        storage
+            .record_indicators("XXBTZEUR", 1, &indicators(100.0))
+            .unwrap();
+        storage
+            .record_indicators("XXBTZEUR", 2, &indicators(102.5))
+            .unwrap();
+        assert_eq!(
+            storage.last_indicators("XXBTZEUR").unwrap(),
+            Some((2, indicators(102.5)))
+        );
+        assert_eq!(storage.last_indicators("XETHZEUR").unwrap(), None);
     }
 }

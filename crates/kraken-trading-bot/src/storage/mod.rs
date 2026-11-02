@@ -9,6 +9,7 @@
 //! | `tickers` | the prices of the pairs of the managers, at each tick |
 //! | `sync_state` | where the synchronization of the orders is |
 //! | `virtual_managers` | the managers added by the bot, deleted ones included |
+//! | `indicators` | the trend and the volatility of the pairs over 24 hours, at each tick |
 //!
 //! The amounts are stored as text, to stay exact. The timestamps are UTC milliseconds, except the
 //! times of the orders which are the seconds of Kraken.
@@ -138,6 +139,22 @@ CREATE TABLE virtual_managers (
     reason      TEXT NOT NULL,
     deleted_at  INTEGER,
     deleted_why TEXT
+);
+"#,
+    // the indicators describe the market, they're not amounts: in REAL, as computed
+    r#"
+CREATE TABLE indicators (
+    pair               TEXT NOT NULL,
+    at                 INTEGER NOT NULL,
+    close              REAL NOT NULL,
+    atr_percent        REAL NOT NULL,
+    ema_fast           REAL NOT NULL,
+    ema_slow           REAL NOT NULL,
+    slope_24h_percent  REAL NOT NULL,
+    range_24h_percent  REAL NOT NULL,
+    change_24h_percent REAL NOT NULL,
+    candles            INTEGER NOT NULL,
+    PRIMARY KEY (pair, at)
 );
 "#,
 ];
