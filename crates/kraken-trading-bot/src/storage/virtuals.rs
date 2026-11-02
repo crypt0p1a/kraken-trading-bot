@@ -114,6 +114,15 @@ impl Storage {
         Ok(())
     }
 
+    /// The ids of every virtual manager, deleted ones included
+    pub fn virtual_ids(&self) -> Result<Vec<i32>> {
+        let mut statement = self
+            .connection
+            .prepare_cached("SELECT id FROM virtual_managers ORDER BY id")?;
+        let ids = statement.query_map([], |row| row.get(0))?;
+        Ok(ids.collect::<rusqlite::Result<_>>()?)
+    }
+
     /// The highest id of the virtual managers, deleted ones included: the ids are never reused
     pub fn last_virtual_id(&self) -> Result<Option<i32>> {
         Ok(self
@@ -176,6 +185,7 @@ mod tests {
         );
         // deleted, the id stays taken
         assert_eq!(storage.last_virtual_id().unwrap(), Some(1_001_002));
+        assert_eq!(storage.virtual_ids().unwrap(), vec![1_000_002, 1_001_002]);
         // an id is added once
         assert!(
             storage

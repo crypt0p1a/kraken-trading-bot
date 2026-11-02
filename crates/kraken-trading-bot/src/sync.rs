@@ -58,7 +58,8 @@ fn of_managers(orders: &[Order], ids: &HashSet<i32>) -> Vec<BotOrder> {
         .collect()
 }
 
-async fn all_closed<E: Exchange>(
+/// Every closed order of the request, page after page
+pub(crate) async fn all_closed<E: Exchange>(
     exchange: &E,
     request: ClosedOrdersRequest,
 ) -> BotResult<Vec<Order>> {
