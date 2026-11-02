@@ -324,7 +324,11 @@ impl<E: Exchange> Bot<E> {
 
     pub async fn tick(&mut self) -> BotResult<TickReport> {
         let mut managers = self.managers()?;
-        if self.pair_keys.len() < managers.len() {
+        // the pairs of the managers sharing one are already known
+        if managers
+            .iter()
+            .any(|it| !self.pair_keys.contains_key(&it.pair))
+        {
             self.prepare().await?;
         }
 

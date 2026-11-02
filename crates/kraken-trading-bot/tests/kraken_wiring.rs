@@ -83,7 +83,8 @@ async fn a_tick_sends_the_expected_requests_to_kraken() {
         "dry_run: true
 buy_order_timeout: 12h
 managers:
-  - {id: 42, pair: XBT/USD, budget: 100, buy_below: 1, sell_above: 1.5}",
+  - {id: 42, pair: XBT/USD, budget: 100, buy_below: 1, sell_above: 1.5}
+  - {id: 43, pair: XBTUSD, budget: 100, buy_below: 2, sell_above: 3}",
     )
     .unwrap();
     let mut bot = Bot::new(exchange, Storage::open_in_memory().unwrap(), config);
@@ -158,6 +159,15 @@ managers:
         .filter(|it| form(it).contains(&("userref".into(), "42".into())))
         .count();
     assert_eq!(with_userref, 1);
+
+    // every pair is asked once, to find the ones of the managers: then only theirs, even when
+    // managers share a pair
+    let all_pairs = requests
+        .iter()
+        .filter(|it| it.url.path() == "/0/public/AssetPairs")
+        .filter(|it| !it.url.query().unwrap_or_default().contains("pair="))
+        .count();
+    assert_eq!(all_pairs, 1);
 
     // an order the database believes open, found nowhere else: asked to Kraken by its txid
     bot.storage()
