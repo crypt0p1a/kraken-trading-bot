@@ -78,6 +78,14 @@ virtual_managers:
   instance: a virtual manager buys only when it holds nothing, so it's deleted with nothing but
   its quote, which goes back to the margin. One which holds a position waits for its sale. The
   managers of the YAML file are never deleted.
+- **Rebuilt** when the database doesn't know them, lost for instance: at the first tick, the bot
+  searches every order of the account (open and closed) for the userrefs of virtual managers. The
+  id tells the copied manager, the prices of the orders check its parameters: the budget from the
+  first buy, `sell_above` from the last sell and the cost of what it sold, `buy_below` from the
+  last buy and the price of the market when it was placed (the public trades of Kraken). A
+  parameter the orders contradict, the copied manager having changed, is taken from the orders.
+  A virtual manager whose copied manager is gone is rebuilt `closing`; one which holds nothing is
+  rebuilt deleted, its id staying taken.
 - They are stored in the `virtual_managers` table of the database, deleted ones included.
 
 ## Running it
