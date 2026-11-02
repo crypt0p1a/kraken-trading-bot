@@ -481,6 +481,14 @@ impl<E: Exchange> Bot<E> {
             cl_ord_id: None,
             userref: Some(manager.id),
             validate: dry_run.then_some(true),
+            display_volume: None,
+            asset_class: None,
+            trigger: None,
+            leverage: None,
+            reduce_only: None,
+            self_trade_prevention: None,
+            deadline: None,
+            broker: None,
         };
         tracing::info!(manager = manager.id, ?side, %amount, %price, dry_run, "placing an order");
 
@@ -605,6 +613,16 @@ pub fn ensure_limit(order: &NewOrder) -> Result<(), String> {
     {
         return Err("refused: a volume in the quote (viqc), only for market orders".into());
     }
+    // the parameters of the margin, iceberg and triggered orders
+    if order.leverage.is_some() || order.reduce_only.is_some() {
+        return Err("refused: a margin order, the bot only trades its own funds".into());
+    }
+    if order.display_volume.is_some() {
+        return Err("refused: a displayed volume, only for iceberg orders".into());
+    }
+    if order.trigger.is_some() {
+        return Err("refused: a trigger, only for stop-loss and take-profit orders".into());
+    }
     Ok(())
 }
 
@@ -627,6 +645,7 @@ fn log_balances(manager: &ManagerConfig, state: &ManagerState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kraken_api::trading::Trigger;
 
     fn limit() -> NewOrder {
         NewOrder {
@@ -643,6 +662,14 @@ mod tests {
             cl_ord_id: None,
             userref: Some(1),
             validate: None,
+            display_volume: None,
+            asset_class: None,
+            trigger: None,
+            leverage: None,
+            reduce_only: None,
+            self_trade_prevention: None,
+            deadline: None,
+            broker: None,
         }
     }
 
@@ -738,6 +765,22 @@ mod tests {
             },
             NewOrder {
                 oflags: Some(vec![OrderFlag::Fciq, OrderFlag::Viqc]),
+                ..limit()
+            },
+            NewOrder {
+                leverage: Some("2:1".into()),
+                ..limit()
+            },
+            NewOrder {
+                reduce_only: Some(true),
+                ..limit()
+            },
+            NewOrder {
+                display_volume: Some("0.0001".into()),
+                ..limit()
+            },
+            NewOrder {
+                trigger: Some(Trigger::Last),
                 ..limit()
             },
         ];
