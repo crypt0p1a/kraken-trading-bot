@@ -100,6 +100,20 @@ impl Storage {
         Ok(managers)
     }
 
+    /// Deletes the virtual manager: it's kept in the table, its id is never reused, and its
+    /// current state is removed from `managers` (its history stays)
+    pub fn delete_virtual_manager(&self, id: i32, at: i64, why: &str) -> Result<()> {
+        let transaction = self.connection.unchecked_transaction()?;
+        transaction.execute(
+            "UPDATE virtual_managers SET deleted_at = ?2, deleted_why = ?3
+             WHERE id = ?1 AND deleted_at IS NULL",
+            params![id, at, why],
+        )?;
+        transaction.execute("DELETE FROM managers WHERE id = ?1", [id])?;
+        transaction.commit()?;
+        Ok(())
+    }
+
     /// The highest id of the virtual managers, deleted ones included: the ids are never reused
     pub fn last_virtual_id(&self) -> Result<Option<i32>> {
         Ok(self
@@ -151,6 +165,16 @@ mod tests {
                 manager(1_001_002, ManagerMode::Closing)
             ]
         );
+        assert_eq!(storage.last_virtual_id().unwrap(), Some(1_001_002));
+
+        storage
+            .delete_virtual_manager(1_001_002, 50, "no money")
+            .unwrap();
+        assert_eq!(
+            storage.virtual_managers().unwrap(),
+            vec![manager(1_000_002, ManagerMode::Active)]
+        );
+        // deleted, the id stays taken
         assert_eq!(storage.last_virtual_id().unwrap(), Some(1_001_002));
         // an id is added once
         assert!(

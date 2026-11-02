@@ -221,3 +221,116 @@ async fn the_gains_of_a_manager_are_not_a_margin() {
     assert!(bot.exchange().balance("ZUSD") > d("30"));
     assert!(virtuals(&bot).is_empty());
 }
+
+const ONE: &str = "\n  - {id: 1, pair: XBTUSD, budget: 30, buy_below: 1, sell_above: 1.5}";
+const VIRTUAL: i32 = 1_000_001;
+
+/// Manager 1 and a copy of it, VIRTUAL, both waiting for their buy order
+async fn with_a_virtual_manager() -> Bot<SimulatedExchange> {
+    let mut bot = bot(
+        exchange("80"),
+        "virtual_managers: {min_virtual_id: 1000000}",
+        ONE,
+    )
+    .await;
+    bot.tick().await.unwrap();
+    assert_eq!(
+        virtuals(&bot).iter().map(|it| it.id).collect::<Vec<_>>(),
+        vec![VIRTUAL]
+    );
+    bot
+}
+
+/// Both buy orders expire unfilled, then `usd` leaves the account
+fn expire_and_withdraw(bot: &Bot<SimulatedExchange>, usd: &str) {
+    bot.exchange().advance(13.0 * 3600.0);
+    bot.exchange().deposit("ZUSD", -d(usd));
+}
+
+async fn outcome(bot: &mut Bot<SimulatedExchange>, id: i32) -> Outcome {
+    bot.tick().await.unwrap().outcomes.remove(&id).unwrap()
+}
+
+#[tokio::test]
+async fn deletes_a_virtual_manager_the_account_cannot_pay_for_anymore() {
+    let mut bot = with_a_virtual_manager().await;
+    // 30 USD left: manager 1 buys with them, its copy has nothing to buy with
+    expire_and_withdraw(&bot, "50");
+
+    for round in 1..3 {
+        let outcome = outcome(&mut bot, VIRTUAL).await;
+        assert!(
+            matches!(&outcome, Outcome::Idle(reason) if reason.ends_with(&format!("({round}/3)"))),
+            "{outcome:?}"
+        );
+    }
+    let outcome = outcome(&mut bot, VIRTUAL).await;
+    assert!(matches!(outcome, Outcome::Deleted(_)), "{outcome:?}");
+
+    assert!(virtuals(&bot).is_empty());
+    assert_eq!(bot.storage().last_virtual_id().unwrap(), Some(VIRTUAL));
+    assert_eq!(bot.storage().manager_balances(VIRTUAL).unwrap(), None);
+    let actions = bot.storage().actions_of(VIRTUAL, 1).unwrap();
+    assert_eq!(actions[0].kind, "virtual_deleted");
+
+    // gone, and not added again: no money is left for anybody
+    for _ in 0..3 {
+        let report = bot.tick().await.unwrap();
+        assert!(!report.outcomes.contains_key(&VIRTUAL));
+    }
+    assert!(virtuals(&bot).is_empty());
+}
+
+#[tokio::test]
+async fn the_ticks_without_money_must_be_in_a_row() {
+    let mut bot = with_a_virtual_manager().await;
+    expire_and_withdraw(&bot, "50");
+    outcome(&mut bot, VIRTUAL).await;
+    outcome(&mut bot, VIRTUAL).await;
+
+    // the money is back: it buys, and starts counting again
+    bot.exchange().deposit("ZUSD", d("50"));
+    let bought = outcome(&mut bot, VIRTUAL).await;
+    assert!(matches!(bought, Outcome::Placed { .. }), "{bought:?}");
+    expire_and_withdraw(&bot, "50");
+
+    for _ in 0..2 {
+        let outcome = outcome(&mut bot, VIRTUAL).await;
+        assert!(matches!(outcome, Outcome::Idle(_)), "{outcome:?}");
+    }
+    let outcome = outcome(&mut bot, VIRTUAL).await;
+    assert!(matches!(outcome, Outcome::Deleted(_)), "{outcome:?}");
+}
+
+#[tokio::test]
+async fn keeps_a_virtual_manager_which_holds_a_position() {
+    let mut bot = with_a_virtual_manager().await;
+    // both bought, both selling: then the rest of the account leaves
+    bot.exchange().set_price(BTC, d("49000"));
+    bot.tick().await.unwrap();
+    let rest = bot.exchange().balance("ZUSD");
+    bot.exchange().deposit("ZUSD", -rest);
+
+    for _ in 0..5 {
+        let outcome = outcome(&mut bot, VIRTUAL).await;
+        assert_eq!(outcome, Outcome::Waited);
+    }
+    assert_eq!(virtuals(&bot).len(), 1);
+}
+
+#[tokio::test]
+async fn never_deletes_a_manager_of_the_file() {
+    let mut bot = bot(
+        exchange("10"),
+        "virtual_managers: {min_virtual_id: 1000000}",
+        ONE,
+    )
+    .await;
+    for _ in 0..5 {
+        let outcome = outcome(&mut bot, 1).await;
+        assert!(
+            matches!(&outcome, Outcome::Idle(reason) if !reason.contains("/3")),
+            "{outcome:?}"
+        );
+    }
+}

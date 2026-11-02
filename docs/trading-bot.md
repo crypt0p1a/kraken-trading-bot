@@ -74,6 +74,10 @@ virtual_managers:
 - **Their ids** are `min_virtual_id + 1000 × order of creation + id of the copied manager`:
   `1003002` is the 4th virtual manager added, a copy of manager 2. The ids of the YAML file must
   then be below 1000, which the check of the configuration enforces. An id is never reused.
+- **Deleted** when the account can't pay for their buy 3 ticks in a row, money withdrawn for
+  instance: a virtual manager buys only when it holds nothing, so it's deleted with nothing but
+  its quote, which goes back to the margin. One which holds a position waits for its sale. The
+  managers of the YAML file are never deleted.
 - They are stored in the `virtual_managers` table of the database, deleted ones included.
 
 ## Running it

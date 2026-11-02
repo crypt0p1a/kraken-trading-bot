@@ -23,6 +23,10 @@ use trading_notify::{Catalog, Notification, Notifier};
 /// The day of the last daily summary, in the sync state
 const DAILY_SUMMARY: &str = "daily_summary_day";
 
+/// Ticks in a row a virtual manager can't buy for lack of money before it's deleted: a balance
+/// seen at a bad time doesn't delete it
+pub const STARVED_TICKS: u32 = 3;
+
 /// What a manager did during a tick
 #[derive(Debug, Clone, PartialEq)]
 pub enum Outcome {
@@ -36,6 +40,8 @@ pub enum Outcome {
         txid: Option<String>,
     },
     Failed(String),
+    /// A virtual manager deleted: it held nothing, and the account couldn't pay for its buy
+    Deleted(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -63,6 +69,10 @@ pub struct Bot<E: Exchange> {
     failures: Mutex<HashMap<String, String>>,
     /// Picks the manager a virtual manager copies
     random: fastrand::Rng,
+    /// Ticks done, to tell the ticks in a row
+    ticks: u64,
+    /// Per virtual manager: the last tick it couldn't buy for lack of money, and how many in a row
+    starved: Mutex<HashMap<i32, (u64, u32)>>,
 }
 
 impl<E: Exchange> Bot<E> {
@@ -75,6 +85,8 @@ impl<E: Exchange> Bot<E> {
             notifier: Notifier::Silent,
             failures: Mutex::new(HashMap::new()),
             random: fastrand::Rng::new(),
+            ticks: 0,
+            starved: Mutex::new(HashMap::new()),
         }
     }
 
@@ -323,6 +335,7 @@ impl<E: Exchange> Bot<E> {
     }
 
     pub async fn tick(&mut self) -> BotResult<TickReport> {
+        self.ticks += 1;
         let mut managers = self.managers()?;
         // the pairs of the managers sharing one are already known
         if managers
@@ -372,6 +385,7 @@ impl<E: Exchange> Bot<E> {
             outcomes.insert(manager.id, outcome);
         }
 
+        managers.retain(|it| !matches!(outcomes.get(&it.id), Some(Outcome::Deleted(_))));
         self.notify_daily_summary(&markets, &managers).await?;
         Ok(TickReport { sync, outcomes })
     }
@@ -527,15 +541,13 @@ impl<E: Exchange> Bot<E> {
                     .copied()
                     .unwrap_or_default();
                 if cost > in_account {
-                    return self.idle(
-                        manager,
-                        format!(
-                            "the account has {} {} available, {} required",
-                            in_account.normalize(),
-                            market.rules.quote_asset,
-                            cost.round_dp(8).normalize()
-                        ),
+                    let reason = format!(
+                        "the account has {} {} available, {} required",
+                        in_account.normalize(),
+                        market.rules.quote_asset,
+                        cost.round_dp(8).normalize()
                     );
+                    return self.starve(manager, reason);
                 }
                 let outcome = self
                     .place(manager, market, OrderSide::Buy, amount, price, &balances)
@@ -546,6 +558,52 @@ impl<E: Exchange> Bot<E> {
                 Ok(outcome)
             }
         }
+    }
+
+    /// The account can't pay for the buy of the manager, which holds nothing: a virtual manager is
+    /// deleted after `STARVED_TICKS` ticks in a row, its money going back to the margin
+    fn starve(&self, manager: &ManagerConfig, reason: String) -> BotResult<Outcome> {
+        let is_virtual = self
+            .config
+            .virtual_managers
+            .as_ref()
+            .is_some_and(|it| it.is_virtual(manager.id));
+        if !is_virtual {
+            return self.idle(manager, reason);
+        }
+
+        let count = {
+            let mut starved = self.starved.lock().unwrap();
+            let entry = starved.entry(manager.id).or_insert((0, 0));
+            *entry = if entry.0 + 1 == self.ticks {
+                (self.ticks, entry.1 + 1)
+            } else {
+                (self.ticks, 1)
+            };
+            entry.1
+        };
+        if count < STARVED_TICKS {
+            return self.idle(manager, format!("{reason} ({count}/{STARVED_TICKS})"));
+        }
+
+        let reason = format!("{reason}, {count} ticks in a row");
+        let at = now_millis();
+        self.storage
+            .delete_virtual_manager(manager.id, at, &reason)?;
+        self.storage.record_action(&ActionRecord {
+            manager_id: manager.id,
+            at,
+            kind: "virtual_deleted".into(),
+            amount: None,
+            price: None,
+            reason: Some(reason.clone()),
+            dry_run: self.config.dry_run,
+            txid: None,
+            error: None,
+        })?;
+        self.starved.lock().unwrap().remove(&manager.id);
+        tracing::info!(manager = manager.id, %reason, "virtual manager deleted");
+        Ok(Outcome::Deleted(reason))
     }
 
     /// Records the reason, unless it's the same as the last action of the manager
