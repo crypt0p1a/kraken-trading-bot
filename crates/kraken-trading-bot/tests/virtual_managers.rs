@@ -63,6 +63,7 @@ fn decode(id: i32) -> VirtualId {
     VirtualManagersConfig {
         min_virtual_id: MIN,
         max: 5,
+        fallback_sell_above: d("1.5"),
     }
     .decode(id)
     .unwrap()
@@ -497,25 +498,57 @@ async fn a_closing_virtual_manager_is_deleted_once_it_sold_everything() {
 }
 
 #[tokio::test]
-async fn a_virtual_manager_without_a_sell_nor_its_copied_manager_is_left_untouched() {
-    // its buy open, its copied manager gone: nothing says at what price to sell
+async fn without_a_sell_nor_its_copied_manager_it_sells_at_the_fallback() {
+    // its buy open, its copied manager gone: nothing but the buy says what it was about
     let bot = with_a_virtual_manager().await;
-    let mut bot = restart(
-        bot,
-        "\n  - {id: 2, pair: ETHUSD, budget: 20, buy_below: 2, sell_above: 3}",
+    let mut bot = Bot::new(
+        bot.into_exchange(),
+        Storage::open_in_memory().unwrap(),
+        config(
+            "virtual_managers: {min_virtual_id: 1000000, fallback_sell_above: 2}",
+            "\n  - {id: 2, pair: ETHUSD, budget: 20, buy_below: 2, sell_above: 3}",
+        ),
     )
-    .await;
-    let report = bot.tick().await.unwrap();
+    .with_seed(7);
+    bot.prepare().await.unwrap();
 
-    assert!(!report.outcomes.contains_key(&VIRTUAL));
-    // its id stays taken, its order is left to Kraken
-    assert!(bot.storage().virtual_ids().unwrap().contains(&VIRTUAL));
-    assert!(report.sync.orphans.contains(&(VIRTUAL as i64)));
-    let open = bot
-        .exchange()
-        .orders()
+    // closing, the budget of its buy: it lets the buy end
+    assert_eq!(outcome(&mut bot, VIRTUAL).await, Outcome::Waited);
+    let manager = bot
+        .storage()
+        .virtual_managers()
+        .unwrap()
         .into_iter()
-        .filter(|it| it.userref == Some(VIRTUAL as i64) && it.status == OrderStatus::Open)
-        .count();
-    assert_eq!(open, 1);
+        .find(|it| it.config.id == VIRTUAL)
+        .unwrap()
+        .config;
+    assert_eq!(
+        manager.mode,
+        kraken_trading_bot::config::ManagerMode::Closing
+    );
+    assert_eq!(manager.sell_above, d("2"));
+    assert_eq!(manager.budget.round_dp(1), d("30"));
+
+    // filled: sold for what it cost + 2%, fees deducted
+    bot.exchange().set_price(BTC, d("49000"));
+    let (amount, price) = match outcome(&mut bot, VIRTUAL).await {
+        Outcome::Placed {
+            side: OrderSide::Sell,
+            amount,
+            price,
+            ..
+        } => (amount, price),
+        other => panic!("a sell expected, got {other:?}"),
+    };
+    let cost = bot
+        .storage()
+        .orders_of(VIRTUAL)
+        .unwrap()
+        .iter()
+        .filter(|it| it.side == OrderSide::Buy)
+        .map(|it| it.cost + it.fee)
+        .sum::<Decimal>();
+    let brought = amount * price * (Decimal::ONE - d("0.0025"));
+    assert!(brought >= cost * d("1.02"), "{brought} for {cost}");
+    assert!(brought < cost * d("1.021"), "{brought} for {cost}");
 }

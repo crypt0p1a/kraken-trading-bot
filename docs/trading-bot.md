@@ -62,6 +62,7 @@ With a `virtual_managers` section, the money of the account no manager uses isn'
 virtual_managers:
   min_virtual_id: 1000000  # first id of the virtual managers
   max: 5                   # most virtual managers at the same time (5 by default)
+  fallback_sell_above: 1.5 # see the rebuild below (1.5 by default)
 ```
 
 - **The margin**, per quote currency: what the account has available, minus what each manager
@@ -86,9 +87,8 @@ virtual_managers:
   parameter the orders contradict, the copied manager having changed, is taken from the orders.
   A virtual manager which holds nothing (no open order, nothing to sell) is rebuilt deleted, its
   id staying taken. One whose copied manager is gone is rebuilt `closing`: it ends its open
-  order, sells what it holds, then is deleted. Without its copied manager nor any sell, nothing
-  says at what price to sell: it's left untouched (its orders reported as orphans) for you to
-  handle.
+  order, sells what it holds, then is deleted. Without its copied manager nor any sell, it sells
+  for what its buy cost + `fallback_sell_above`% (1.5 by default), fees included.
 - They are stored in the `virtual_managers` table of the database, deleted ones included.
 
 ## Running it

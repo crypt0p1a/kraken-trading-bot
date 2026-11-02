@@ -24,6 +24,7 @@ buy_order_timeout: 12h
 # virtual_managers:
 #   min_virtual_id: 1000000
 #   max: 5                           # most virtual managers at the same time
+#   fallback_sell_above: 1.5         # rebuilt without its manager nor any sell: sells at cost +1.5%
 
 managers:
   # id: Kraken userref of the orders of the manager, from 1 to 2147483647, unique, never reused

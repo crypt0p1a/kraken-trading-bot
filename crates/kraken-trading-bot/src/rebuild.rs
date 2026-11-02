@@ -7,7 +7,8 @@
 //! - `buy_below`: the last buy is at -`buy_below`% of the price of the market when it was placed
 //!
 //! A parameter the orders contradict is taken from the orders. A virtual manager whose copied
-//! manager is gone is rebuilt closing, from its orders alone. One which holds nothing is rebuilt
+//! manager is gone is rebuilt closing, from its orders alone: without any sell, it sells for
+//! what its buy cost + `fallback_sell_above`%. One which holds nothing is rebuilt
 //! deleted: its id stays taken.
 
 use crate::config::{BotConfig, ManagerConfig, ManagerMode, VirtualManagersConfig};
@@ -117,6 +118,7 @@ pub async fn rebuild_one<E: Exchange>(
     exchange: &E,
     id: i32,
     template: Option<&ManagerConfig>,
+    fallback_sell_above: Decimal,
     orders: &[BotOrder],
     rules: &PairRules,
     fee_rate: Decimal,
@@ -148,7 +150,8 @@ pub async fn rebuild_one<E: Exchange>(
                 close_percent,
             )
         }
-        None => template.map(|it| it.sell_above),
+        // never sold: the copied manager, else the fallback over what the buy cost
+        None => Some(template.map_or(fallback_sell_above, |it| it.sell_above)),
     };
     let Some(sell_above) = sell_above.filter(|it| *it > Decimal::ZERO) else {
         return Ok(None);
@@ -242,7 +245,16 @@ pub async fn rebuild<E: Exchange>(
             .iter()
             .find(|it| it.id == decoded.template && PairRules::matches(&it.pair, key, pair));
 
-        let found = rebuild_one(exchange, id, template, &orders, &rules, fee_rate).await?;
+        let found = rebuild_one(
+            exchange,
+            id,
+            template,
+            virtuals.fallback_sell_above,
+            &orders,
+            &rules,
+            fee_rate,
+        )
+        .await?;
         let holds_orders = orders.iter().any(|it| !it.is_final());
         let (manager, holds, reason) = match found {
             Some(config) => {

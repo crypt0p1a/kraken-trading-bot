@@ -80,6 +80,14 @@ pub struct VirtualManagersConfig {
     /// Most virtual managers at the same time
     #[serde(default = "default_max_virtual_managers")]
     pub max: usize,
+    /// `sell_above` of a virtual manager rebuilt without its copied manager nor any sell: what
+    /// its buy cost + this %, fees included
+    #[serde(default = "default_fallback_sell_above")]
+    pub fallback_sell_above: Decimal,
+}
+
+fn default_fallback_sell_above() -> Decimal {
+    Decimal::new(15, 1)
 }
 
 fn default_max_virtual_managers() -> usize {
@@ -236,6 +244,9 @@ impl BotConfig {
             }
             if virtuals.max < 1 {
                 return invalid("virtual_managers: max must be at least 1".into());
+            }
+            if virtuals.fallback_sell_above <= Decimal::ZERO {
+                return invalid("virtual_managers: fallback_sell_above must be > 0".into());
             }
         }
 
@@ -487,7 +498,9 @@ managers: [{id: 999, pair: XBTUSD, budget: 30, buy_below: 1, sell_above: 1.5}]",
 
         let defaults =
             BotConfig::parse("virtual_managers: {min_virtual_id: 5000}\nmanagers: []").unwrap();
-        assert_eq!(defaults.virtual_managers.unwrap().max, 5);
+        let defaults = defaults.virtual_managers.unwrap();
+        assert_eq!(defaults.max, 5);
+        assert_eq!(defaults.fallback_sell_above, Decimal::new(15, 1));
         assert_eq!(
             BotConfig::parse("managers: []").unwrap().virtual_managers,
             None
@@ -508,6 +521,11 @@ managers: [{id: 999, pair: XBTUSD, budget: 30, buy_below: 1, sell_above: 1.5}]",
                 "virtual_managers: {min_virtual_id: 1000000, max: 0}",
                 "1",
                 "max",
+            ),
+            (
+                "virtual_managers: {min_virtual_id: 1000000, fallback_sell_above: 0}",
+                "1",
+                "fallback_sell_above",
             ),
             (
                 "virtual_managers: {min_virtual_id: 1000000}",
@@ -539,6 +557,7 @@ managers: [{id: 999, pair: XBTUSD, budget: 30, buy_below: 1, sell_above: 1.5}]",
         let virtuals = VirtualManagersConfig {
             min_virtual_id: 1_000_000,
             max: 5,
+            fallback_sell_above: Decimal::ONE,
         };
         let id = VirtualId {
             sequence: 3,
