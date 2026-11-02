@@ -170,6 +170,8 @@ docker run --rm -v kraken-rust_kraken-bot-data:/data -it keinos/sqlite3 sqlite3 
 - `scenarios.rs`: the bot tick after tick on a simulated Kraken (fills, expiry, partial fills,
   closing managers, missing funds, orphans, restart without database, refused orders, dry run,
   600 ticks of a random market where every cycle makes money, only limit orders)
-- `virtual_managers.rs`: the virtual managers on a simulated Kraken
+- `virtual_managers.rs`: the virtual managers on a simulated Kraken (added with the margin,
+  deleted without money or once closed, rebuilt after the loss of the database)
 - `kraken_wiring.rs`: the requests sent to a mocked Kraken
-- `live_dry_run.rs`: one tick on the real Kraken, as a dry run
+- `live_dry_run.rs`: one tick on the real Kraken, as a dry run, the history of the account
+  searched for virtual managers

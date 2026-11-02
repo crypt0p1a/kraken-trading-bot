@@ -39,12 +39,13 @@ async fn a_dry_run_tick_on_the_real_kraken() {
         RestOptions::default(),
     )
     .unwrap();
-    // ids no real manager uses
+    // ids no real manager uses; the virtual managers search the whole history of the account
     let config = BotConfig::parse(
         "dry_run: true
+virtual_managers: {min_virtual_id: 2000000000, max: 1}
 managers:
-  - {id: 2000000001, pair: XBTUSD, budget: 10, buy_below: 1, sell_above: 1.5}
-  - {id: 2000000002, pair: ETH/EUR, budget: 10, buy_below: 2, sell_above: 3}",
+  - {id: 998, pair: XBTUSD, budget: 10, buy_below: 1, sell_above: 1.5}
+  - {id: 999, pair: ETH/EUR, budget: 10, buy_below: 2, sell_above: 3}",
     )
     .unwrap();
     let mut bot = Bot::new(exchange, Storage::open_in_memory().unwrap(), config);

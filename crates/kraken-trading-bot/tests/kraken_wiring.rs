@@ -50,6 +50,11 @@ async fn kraken() -> MockServer {
             "/0/private/BalanceEx",
             json!({"ZUSD": {"balance": "500", "hold_trade": "0"}}),
         ),
+        (
+            "/0/public/Trades",
+            json!({"XXBTZUSD": [["50000.0", "0.1", 1800000001.5, "b", "l", "", 7]],
+                "last": "1800000001500000000"}),
+        ),
         ("/0/private/OpenOrders", json!({"open": {}})),
         ("/0/private/QueryOrders", json!({})),
         ("/0/private/ClosedOrders", json!({"closed": {}, "count": 0})),
@@ -195,4 +200,68 @@ managers:
         .find(|it| it.url.path() == "/0/private/QueryOrders")
         .expect("QueryOrders");
     assert!(form(query).contains(&("txid".into(), "OAAAAA-BBBBB-CCCCCC".into())));
+}
+
+fn exchange(server: &MockServer) -> KrakenExchange {
+    KrakenExchange::new(
+        "key".into(),
+        "c2VjcmV0".into(),
+        RestOptions {
+            host: server.uri(),
+            ..RestOptions::default()
+        },
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn reads_the_trades_from_a_time() {
+    use kraken_trading_bot::exchange::Exchange;
+    let server = kraken().await;
+    let trades = exchange(&server)
+        .trades("XXBTZUSD", 1_800_000_000.7)
+        .await
+        .unwrap();
+    assert_eq!(trades.len(), 1);
+    assert_eq!(trades[0].price, "50000.0".parse().unwrap());
+
+    let requests = server.received_requests().await.unwrap();
+    let query = requests[0].url.query().unwrap_or_default().to_string();
+    assert_eq!(requests[0].url.path(), "/0/public/Trades");
+    assert!(query.contains("pair=XXBTZUSD"), "{query}");
+    assert!(query.contains("since=1800000000"), "{query}");
+}
+
+#[tokio::test]
+async fn searches_the_whole_history_for_virtual_managers_once() {
+    let server = kraken().await;
+    let config = BotConfig::parse(
+        "dry_run: true
+virtual_managers: {min_virtual_id: 1000000}
+managers:
+  - {id: 42, pair: XBTUSD, budget: 100, buy_below: 1, sell_above: 1.5}",
+    )
+    .unwrap();
+    let mut bot = Bot::new(
+        exchange(&server),
+        Storage::open_in_memory().unwrap(),
+        config,
+    );
+    bot.prepare().await.unwrap();
+    bot.tick().await.unwrap();
+    bot.tick().await.unwrap();
+
+    // neither a userref nor a start: every closed order of the account
+    let requests = server.received_requests().await.unwrap();
+    let whole = requests
+        .iter()
+        .filter(|it| it.url.path() == "/0/private/ClosedOrders")
+        .map(form)
+        .filter(|params| {
+            !params
+                .iter()
+                .any(|(key, _)| key == "userref" || key == "start")
+        })
+        .count();
+    assert_eq!(whole, 1);
 }
