@@ -7,6 +7,7 @@
 //! | Module | Responsibility |
 //! |--------|----------------|
 //! | [`config`] | the YAML configuration of the managers, the environment |
+//! | [`market`] | the trend and the volatility of a pair over 24 hours, recorded only |
 //! | [`pair`], [`planner`] | the constraints of a pair, the prices and amounts of the orders |
 //! | [`order`], [`ledger`] | the orders of a manager, what it has from them |
 //! | [`strategy`] | what a manager does next |
@@ -24,6 +25,7 @@ pub mod config;
 pub mod decimal;
 pub mod exchange;
 pub mod ledger;
+pub mod market;
 pub mod notify;
 pub mod order;
 pub mod pair;
