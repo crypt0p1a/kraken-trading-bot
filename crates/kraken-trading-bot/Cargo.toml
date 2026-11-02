@@ -11,6 +11,7 @@ name = "kraken-trading-bot"
 path = "src/main.rs"
 
 [dependencies]
+fastrand.workspace = true
 humantime-serde.workspace = true
 kraken-api.workspace = true
 trading-notify.workspace = true

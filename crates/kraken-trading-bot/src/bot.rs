@@ -2,14 +2,14 @@
 //! ManagersPool of cex-trading-bot
 
 use crate::clock::now_millis;
-use crate::config::{BotConfig, EventKind, ManagerConfig, ManagerMode};
+use crate::config::{BotConfig, EventKind, ManagerConfig, ManagerMode, VirtualId};
 use crate::decimal::percent;
 use crate::exchange::Exchange;
 use crate::ledger::{self, Balances};
 use crate::notify::{self, OrderChange, OrderEvent};
 use crate::order::BotOrder;
 use crate::pair::PairRules;
-use crate::storage::{ActionRecord, ManagerState, Storage, TickerRecord};
+use crate::storage::{ActionRecord, ManagerState, Storage, TickerRecord, VirtualManager};
 use crate::strategy::{self, Action, Decision};
 use crate::sync::{self, SyncReport};
 use crate::{BotError, BotResult};
@@ -61,6 +61,8 @@ pub struct Bot<E: Exchange> {
     notifier: Notifier,
     /// The failure last notified, per source: a failure repeated at each tick is notified once
     failures: Mutex<HashMap<String, String>>,
+    /// Picks the manager a virtual manager copies
+    random: fastrand::Rng,
 }
 
 impl<E: Exchange> Bot<E> {
@@ -72,7 +74,28 @@ impl<E: Exchange> Bot<E> {
             pair_keys: HashMap::new(),
             notifier: Notifier::Silent,
             failures: Mutex::new(HashMap::new()),
+            random: fastrand::Rng::new(),
         }
+    }
+
+    /// The same managers copied by the virtual managers at each run: for the tests
+    pub fn with_seed(mut self, seed: u64) -> Self {
+        self.random = fastrand::Rng::with_seed(seed);
+        self
+    }
+
+    /// The managers of the YAML file, then the virtual managers
+    pub fn managers(&self) -> BotResult<Vec<ManagerConfig>> {
+        let mut managers = self.config.managers.clone();
+        if self.config.virtual_managers.is_some() {
+            managers.extend(
+                self.storage
+                    .virtual_managers()?
+                    .into_iter()
+                    .map(|it| it.config),
+            );
+        }
+        Ok(managers)
     }
 
     /// Where the notifications of the configuration go
@@ -135,15 +158,11 @@ impl<E: Exchange> Bot<E> {
         &self,
         events: &[OrderEvent],
         markets: &HashMap<String, Market>,
+        managers: &[ManagerConfig],
     ) -> BotResult<()> {
         for event in events {
             let order = &event.order;
-            let Some(manager) = self
-                .config
-                .managers
-                .iter()
-                .find(|it| it.id == order.manager_id)
-            else {
+            let Some(manager) = managers.iter().find(|it| it.id == order.manager_id) else {
                 continue;
             };
             let market = &markets[&self.pair_keys[&manager.pair]];
@@ -168,11 +187,15 @@ impl<E: Exchange> Bot<E> {
     }
 
     /// Once a day, after the hour of the configuration
-    async fn notify_daily_summary(&self, markets: &HashMap<String, Market>) -> BotResult<()> {
+    async fn notify_daily_summary(
+        &self,
+        markets: &HashMap<String, Market>,
+        managers: &[ManagerConfig],
+    ) -> BotResult<()> {
         let Some(notifications) = &self.config.notifications else {
             return Ok(());
         };
-        if !notifications.wants(EventKind::DailySummary) || self.config.managers.is_empty() {
+        if !notifications.wants(EventKind::DailySummary) || managers.is_empty() {
             return Ok(());
         }
         let now = self.exchange.now();
@@ -185,7 +208,7 @@ impl<E: Exchange> Bot<E> {
         }
 
         let mut summaries = Vec::new();
-        for manager in &self.config.managers {
+        for manager in managers {
             let market = &markets[&self.pair_keys[&manager.pair]];
             let value = match self.storage.manager_balances(manager.id)? {
                 Some((balances, price, _)) => balances.value(price),
@@ -231,7 +254,7 @@ impl<E: Exchange> Bot<E> {
     /// Finds the pairs of the managers on Kraken: fails on a pair unknown or not tradable
     pub async fn prepare(&mut self) -> BotResult<()> {
         let all = self.exchange.asset_pairs(&[]).await?;
-        for manager in &self.config.managers {
+        for manager in &self.managers()? {
             let (key, pair) = all
                 .iter()
                 .find(|(key, pair)| PairRules::matches(&manager.pair, key, pair))
@@ -300,19 +323,17 @@ impl<E: Exchange> Bot<E> {
     }
 
     pub async fn tick(&mut self) -> BotResult<TickReport> {
-        if self.pair_keys.len() < self.config.managers.len() {
+        let mut managers = self.managers()?;
+        if self.pair_keys.len() < managers.len() {
             self.prepare().await?;
         }
 
         let markets = self.markets().await?;
-        let sync = sync::synchronize(
-            &self.exchange,
-            &self.storage,
-            &self.config.ids(),
-            self.exchange.now(),
-        )
-        .await?;
-        self.notify_order_events(&sync.events, &markets).await?;
+        let ids = managers.iter().map(|it| it.id).collect();
+        let sync =
+            sync::synchronize(&self.exchange, &self.storage, &ids, self.exchange.now()).await?;
+        self.notify_order_events(&sync.events, &markets, &managers)
+            .await?;
 
         // what the account has, decreased locally when orders are placed
         let mut available: HashMap<String, Decimal> = self
@@ -323,8 +344,12 @@ impl<E: Exchange> Bot<E> {
             .map(|(asset, balance)| (asset, balance.available()))
             .collect();
 
+        if let Some(created) = self.add_virtual_manager(&managers, &markets, &available)? {
+            managers.push(created);
+        }
+
         let mut outcomes = HashMap::new();
-        for manager in self.config.managers.clone() {
+        for manager in managers.clone() {
             let market = &markets[&self.pair_keys[&manager.pair]];
             let outcome = match self.run_manager(&manager, market, &mut available).await {
                 Ok(outcome) => outcome,
@@ -343,8 +368,112 @@ impl<E: Exchange> Bot<E> {
             outcomes.insert(manager.id, outcome);
         }
 
-        self.notify_daily_summary(&markets).await?;
+        self.notify_daily_summary(&markets, &managers).await?;
         Ok(TickReport { sync, outcomes })
+    }
+
+    /// Per quote asset: what the account has available that no manager owns. The quote of the
+    /// open buy orders isn't available, the quote a manager has to buy with is its own
+    fn margins(
+        &self,
+        managers: &[ManagerConfig],
+        markets: &HashMap<String, Market>,
+        available: &HashMap<String, Decimal>,
+    ) -> BotResult<HashMap<String, Decimal>> {
+        let mut margins = HashMap::new();
+        for manager in managers {
+            let quote = &markets[&self.pair_keys[&manager.pair]].rules.quote_asset;
+            let owned = ledger::compute(manager.budget, &self.storage.orders_of(manager.id)?)
+                .quote_available
+                .max(Decimal::ZERO);
+            *margins
+                .entry(quote.clone())
+                .or_insert_with(|| available.get(quote).copied().unwrap_or_default()) -= owned;
+        }
+        Ok(margins)
+    }
+
+    /// Adds a copy of a manager of the YAML file, picked at random among the active ones whose
+    /// budget the margin of their quote pays for: one at most per tick
+    fn add_virtual_manager(
+        &mut self,
+        managers: &[ManagerConfig],
+        markets: &HashMap<String, Market>,
+        available: &HashMap<String, Decimal>,
+    ) -> BotResult<Option<ManagerConfig>> {
+        let Some(virtuals) = self.config.virtual_managers.clone() else {
+            return Ok(None);
+        };
+        let count = managers
+            .iter()
+            .filter(|it| virtuals.is_virtual(it.id))
+            .count();
+        if count >= virtuals.max {
+            return Ok(None);
+        }
+
+        let margins = self.margins(managers, markets, available)?;
+        let margin_of = |manager: &ManagerConfig| {
+            let quote = &markets[&self.pair_keys[&manager.pair]].rules.quote_asset;
+            (
+                quote.clone(),
+                margins.get(quote).copied().unwrap_or_default(),
+            )
+        };
+        let candidates: Vec<&ManagerConfig> = self
+            .config
+            .managers
+            .iter()
+            .filter(|it| it.mode == ManagerMode::Active && margin_of(it).1 >= it.budget)
+            .collect();
+        if candidates.is_empty() {
+            return Ok(None);
+        }
+        let template = candidates[self.random.usize(..candidates.len())].clone();
+
+        let sequence = self
+            .storage
+            .last_virtual_id()?
+            .and_then(|it| virtuals.decode(it))
+            .map_or(0, |it| it.sequence + 1);
+        let id = virtuals
+            .encode(VirtualId {
+                sequence,
+                template: template.id,
+            })
+            .ok_or_else(|| BotError::Config("no id left for a virtual manager".into()))?;
+
+        let (quote, margin) = margin_of(&template);
+        let reason = format!(
+            "copy of manager {}, {} {quote} used by no manager",
+            template.id,
+            margin.round_dp(8).normalize()
+        );
+        let config = ManagerConfig {
+            id,
+            mode: ManagerMode::Active,
+            ..template.clone()
+        };
+        let at = now_millis();
+        self.storage.add_virtual_manager(&VirtualManager {
+            config: config.clone(),
+            template_id: template.id,
+            created_at: at,
+            reason: reason.clone(),
+        })?;
+        self.storage.record_action(&ActionRecord {
+            manager_id: id,
+            at,
+            kind: "virtual_created".into(),
+            amount: Some(config.budget),
+            price: None,
+            reason: Some(reason.clone()),
+            dry_run: self.config.dry_run,
+            txid: None,
+            error: None,
+        })?;
+        tracing::info!(manager = id, template = template.id, pair = %config.pair, budget = %config.budget, %reason, "virtual manager added");
+        Ok(Some(config))
     }
 
     async fn run_manager(
