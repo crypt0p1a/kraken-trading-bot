@@ -3,14 +3,16 @@
 //!
 //! In f64, as `yata` computes: they describe the market, the prices of the orders stay decimals.
 
-use kraken_api::market::Candle;
+use kraken_api::market::{Candle, CandleInterval};
 use rust_decimal::prelude::ToPrimitive;
 use yata::core::Method;
 use yata::methods::{EMA, LinReg, RMA};
 
 /// Candles of 15 minutes: 96 for 24 hours
-pub const CANDLE_MINUTES: i64 = 15;
+pub const INTERVAL: CandleInterval = CandleInterval::Res15m;
 const DAY: usize = 96;
+/// The candles asked: 25 hours, the last one being still built
+pub const WINDOW_SECONDS: i64 = 25 * 3600;
 /// The fewest candles to compute the indicators from: 12 hours
 const FEWEST: usize = 48;
 /// The true ranges averaged by the ATR (Wilder)

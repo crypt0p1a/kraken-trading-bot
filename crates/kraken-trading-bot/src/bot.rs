@@ -6,6 +6,7 @@ use crate::config::{BotConfig, EventKind, ManagerConfig, ManagerMode, VirtualId}
 use crate::decimal::percent;
 use crate::exchange::Exchange;
 use crate::ledger::{self, Balances};
+use crate::market;
 use crate::notify::{self, OrderChange, OrderEvent};
 use crate::order::BotOrder;
 use crate::pair::PairRules;
@@ -324,6 +325,7 @@ impl<E: Exchange> Bot<E> {
                 volume_24h: ticker.volume.last_24h,
                 vwap_24h: ticker.vwap.last_24h,
             })?;
+            self.record_indicators(&key, at).await;
 
             markets.insert(
                 key.clone(),
@@ -335,6 +337,39 @@ impl<E: Exchange> Bot<E> {
             );
         }
         Ok(markets)
+    }
+
+    /// The trend and the volatility of the pair over 24 hours, logged and recorded: nothing decides
+    /// on them yet. A failure is only logged, the tick goes on
+    async fn record_indicators(&self, key: &str, at: i64) {
+        let since = self.exchange.now() as i64 - market::WINDOW_SECONDS;
+        let candles = match self.exchange.candles(key, market::INTERVAL, since).await {
+            Ok(candles) => candles,
+            Err(error) => {
+                tracing::warn!(pair = key, %error, "no candles: no indicators");
+                return;
+            }
+        };
+        let Some(indicators) = market::compute(&candles) else {
+            tracing::info!(
+                pair = key,
+                candles = candles.len(),
+                "not enough candles for the indicators"
+            );
+            return;
+        };
+        tracing::info!(
+            pair = key,
+            trend = indicators.trend(),
+            atr = format!("{:.3}%", indicators.atr_percent),
+            slope_24h = format!("{:+.2}%", indicators.slope_24h_percent),
+            change_24h = format!("{:+.2}%", indicators.change_24h_percent),
+            range_24h = format!("{:.2}%", indicators.range_24h_percent),
+            "indicators"
+        );
+        if let Err(error) = self.storage.record_indicators(key, at, &indicators) {
+            tracing::warn!(pair = key, %error, "the indicators couldn't be recorded");
+        }
     }
 
     pub async fn tick(&mut self) -> BotResult<TickReport> {
