@@ -2,7 +2,8 @@ use super::{Exchange, ExchangeResult};
 use kraken_api::KrakenError;
 use kraken_api::account::{ExtendedBalance, FeeInfo, TradeVolume};
 use kraken_api::market::{
-    AssetPair, PriceLevel, PublicTrade, Ticker, TradeLevel, Window, WindowCount,
+    AssetPair, Candle, CandleInterval, PriceLevel, PublicTrade, Ticker, TradeLevel, Window,
+    WindowCount,
 };
 use kraken_api::trading::{
     CloseTime, ClosedOrders, ClosedOrdersRequest, NewOrder, NewOrderAnswer, NewOrderDescription,
@@ -421,6 +422,57 @@ impl Exchange for SimulatedExchange {
             .collect())
     }
 
+    /// The candles of the history of the prices: the price of a candle is the one at its start,
+    /// then each change in it
+    async fn candles(
+        &self,
+        pair: &str,
+        interval: CandleInterval,
+        since: i64,
+    ) -> ExchangeResult<Vec<Candle>> {
+        let state = self.state();
+        let history = state.history.get(pair).cloned().unwrap_or_default();
+        let Some(first) = history.first() else {
+            return Ok(Vec::new());
+        };
+        let length = i64::from(interval.minutes()) * 60;
+        let now = state.now as i64;
+        let start = since.max(first.0 as i64);
+        let mut time = start - start.rem_euclid(length);
+        let mut candles = Vec::new();
+        while time <= now && candles.len() < 720 {
+            let end = (time + length) as f64;
+            let open = history
+                .iter()
+                .rev()
+                .find(|(at, _)| *at <= time as f64)
+                .unwrap_or(first)
+                .1;
+            let prices: Vec<Decimal> = std::iter::once(open)
+                .chain(
+                    history
+                        .iter()
+                        .filter(|(at, _)| *at > time as f64 && *at < end)
+                        .map(|(_, price)| *price),
+                )
+                .collect();
+            let close = *prices.last().unwrap();
+            candles.push(Candle {
+                time,
+                open,
+                high: prices.iter().copied().max().unwrap(),
+                low: prices.iter().copied().min().unwrap(),
+                close,
+                vwap: close,
+                volume: Decimal::ONE,
+                count: prices.len() as i64,
+                is_closed: end <= state.now,
+            });
+            time += length;
+        }
+        Ok(candles)
+    }
+
     async fn trade_volume(&self, pairs: &[String]) -> ExchangeResult<TradeVolume> {
         let keys = self.asset_pairs(pairs).await?;
         let fee = self.state().fee_percent;
@@ -609,5 +661,40 @@ impl Exchange for SimulatedExchange {
             description,
             txids: vec![txid],
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::planner::tests::d;
+
+    #[tokio::test]
+    async fn builds_the_candles_from_the_history_of_the_prices() {
+        // 1_800_000_000 starts a candle of 15 minutes
+        let exchange = SimulatedExchange::new(1_800_000_000.0);
+        exchange.add_pair("XXBTZUSD", "XBTUSD", "XXBT", "ZUSD", d("100"));
+        exchange.advance(300.0);
+        exchange.set_price("XXBTZUSD", d("110"));
+        exchange.advance(300.0);
+        exchange.set_price("XXBTZUSD", d("90"));
+        // in the second candle
+        exchange.advance(600.0);
+
+        let candles = exchange
+            .candles("XXBTZUSD", CandleInterval::Res15m, 1_799_990_000)
+            .await
+            .unwrap();
+        assert_eq!(candles.len(), 2);
+        let first = &candles[0];
+        assert_eq!(first.time, 1_800_000_000);
+        assert_eq!(
+            (first.open, first.high, first.low, first.close),
+            (d("100"), d("110"), d("90"), d("90"))
+        );
+        assert!(first.is_closed);
+        // the price of then, still being built
+        assert_eq!((candles[1].open, candles[1].close), (d("90"), d("90")));
+        assert!(!candles[1].is_closed);
     }
 }

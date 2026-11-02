@@ -55,6 +55,11 @@ async fn kraken() -> MockServer {
             json!({"XXBTZUSD": [["50000.0", "0.1", 1800000001.5, "b", "l", "", 7]],
                 "last": "1800000001500000000"}),
         ),
+        (
+            "/0/public/OHLC",
+            json!({"XXBTZUSD": [[1800000000, "50000.0", "50100.0", "49900.0", "50050.0", "50010.0", "1.5", 12]],
+                "last": 1800000000}),
+        ),
         ("/0/private/OpenOrders", json!({"open": {}})),
         ("/0/private/CancelOrder", json!({"count": 1})),
         ("/0/private/QueryOrders", json!({})),
@@ -283,4 +288,24 @@ async fn cancels_an_order_by_its_txid() {
         .expect("CancelOrder");
     assert_eq!(cancel.method.as_str(), "POST");
     assert!(form(cancel).contains(&("txid".into(), "OAAAAA-BBBBB-CCCCCC".into())));
+}
+
+#[tokio::test]
+async fn reads_the_candles_of_fifteen_minutes() {
+    use kraken_api::market::CandleInterval;
+    use kraken_trading_bot::exchange::Exchange;
+    let server = kraken().await;
+    let candles = exchange(&server)
+        .candles("XXBTZUSD", CandleInterval::Res15m, 1_799_910_000)
+        .await
+        .unwrap();
+    assert_eq!(candles.len(), 1);
+    assert_eq!(candles[0].close, "50050.0".parse().unwrap());
+
+    let requests = server.received_requests().await.unwrap();
+    let query = requests[0].url.query().unwrap_or_default().to_string();
+    assert_eq!(requests[0].url.path(), "/0/public/OHLC");
+    for expected in ["pair=XXBTZUSD", "interval=15", "since=1799910000"] {
+        assert!(query.contains(expected), "{query}");
+    }
 }

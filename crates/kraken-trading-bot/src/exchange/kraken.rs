@@ -1,6 +1,8 @@
 use super::{Exchange, ExchangeResult};
 use kraken_api::account::{ExtendedBalance, TradeVolume};
-use kraken_api::market::{AssetPair, PublicTrade, RecentTradesRequest, Ticker};
+use kraken_api::market::{
+    AssetPair, Candle, CandleInterval, CandlesRequest, PublicTrade, RecentTradesRequest, Ticker,
+};
 use kraken_api::trading::{
     ClosedOrders, ClosedOrdersRequest, NewOrder, NewOrderAnswer, OpenOrdersRequest, Order,
     OrderReference, QueryOrdersRequest,
@@ -46,6 +48,20 @@ impl Exchange for KrakenExchange {
             asset_class: None,
         };
         Ok(self.public.recent_trades(&request).await?.trades)
+    }
+
+    async fn candles(
+        &self,
+        pair: &str,
+        interval: CandleInterval,
+        since: i64,
+    ) -> ExchangeResult<Vec<Candle>> {
+        let request = CandlesRequest {
+            pair: pair.to_string(),
+            interval,
+            since: Some(since),
+        };
+        Ok(self.public.candles(&request).await?.candles)
     }
 
     async fn trade_volume(&self, pairs: &[String]) -> ExchangeResult<TradeVolume> {
