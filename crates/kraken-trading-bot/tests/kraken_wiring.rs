@@ -56,6 +56,7 @@ async fn kraken() -> MockServer {
                 "last": "1800000001500000000"}),
         ),
         ("/0/private/OpenOrders", json!({"open": {}})),
+        ("/0/private/CancelOrder", json!({"count": 1})),
         ("/0/private/QueryOrders", json!({})),
         ("/0/private/ClosedOrders", json!({"closed": {}, "count": 0})),
         (
@@ -264,4 +265,22 @@ managers:
         })
         .count();
     assert_eq!(whole, 1);
+}
+
+#[tokio::test]
+async fn cancels_an_order_by_its_txid() {
+    use kraken_trading_bot::exchange::Exchange;
+    let server = kraken().await;
+    exchange(&server)
+        .cancel_order("OAAAAA-BBBBB-CCCCCC")
+        .await
+        .unwrap();
+
+    let requests = server.received_requests().await.unwrap();
+    let cancel = requests
+        .iter()
+        .find(|it| it.url.path() == "/0/private/CancelOrder")
+        .expect("CancelOrder");
+    assert_eq!(cancel.method.as_str(), "POST");
+    assert!(form(cancel).contains(&("txid".into(), "OAAAAA-BBBBB-CCCCCC".into())));
 }

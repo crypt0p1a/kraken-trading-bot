@@ -3,7 +3,7 @@ use kraken_api::account::{ExtendedBalance, TradeVolume};
 use kraken_api::market::{AssetPair, PublicTrade, RecentTradesRequest, Ticker};
 use kraken_api::trading::{
     ClosedOrders, ClosedOrdersRequest, NewOrder, NewOrderAnswer, OpenOrdersRequest, Order,
-    QueryOrdersRequest,
+    OrderReference, QueryOrdersRequest,
 };
 use kraken_api::{PrivateApi, PublicApi, RateLimiter, RestOptions};
 use std::collections::HashMap;
@@ -81,5 +81,12 @@ impl Exchange for KrakenExchange {
 
     async fn new_order(&self, order: &NewOrder) -> ExchangeResult<NewOrderAnswer> {
         self.private.new_order(order).await
+    }
+
+    async fn cancel_order(&self, txid: &str) -> ExchangeResult<()> {
+        let order = OrderReference::Txid {
+            txid: txid.to_string(),
+        };
+        self.private.cancel_order(&order).await.map(|_| ())
     }
 }

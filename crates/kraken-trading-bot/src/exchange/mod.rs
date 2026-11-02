@@ -47,4 +47,7 @@ pub trait Exchange {
     async fn query_orders(&self, txids: &[String]) -> ExchangeResult<Vec<Order>>;
 
     async fn new_order(&self, order: &NewOrder) -> ExchangeResult<NewOrderAnswer>;
+
+    /// Cancels the open order of this txid
+    async fn cancel_order(&self, txid: &str) -> ExchangeResult<()>;
 }

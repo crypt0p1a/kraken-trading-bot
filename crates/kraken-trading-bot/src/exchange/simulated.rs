@@ -513,6 +513,19 @@ impl Exchange for SimulatedExchange {
             .collect())
     }
 
+    async fn cancel_order(&self, txid: &str) -> ExchangeResult<()> {
+        let open = self
+            .state()
+            .orders
+            .iter()
+            .any(|it| it.txid == txid && it.status == OrderStatus::Open);
+        if !open {
+            return Err(error("EOrder:Unknown order"));
+        }
+        self.cancel(txid);
+        Ok(())
+    }
+
     async fn new_order(&self, request: &NewOrder) -> ExchangeResult<NewOrderAnswer> {
         let mut state = self.state();
         state.add_order_calls += 1;
