@@ -13,6 +13,7 @@
 //! | [`storage`] | the SQLite database: orders, states and history of the managers, actions, prices |
 //! | [`exchange`] | what the bot needs from Kraken, the real one and a simulated one |
 //! | [`sync`] | the orders of the managers, from Kraken to the database |
+//! | [`rebuild`] | the virtual managers found again in the orders of Kraken |
 //! | [`bot`] | a tick: synchronization, then each manager decides and acts |
 //! | [`notify`] | what changed in the orders, for the notifications of `trading-notify` |
 //! | [`notify`] | the notifications on the phone, through ntfy |
@@ -27,6 +28,7 @@ pub mod notify;
 pub mod order;
 pub mod pair;
 pub mod planner;
+pub mod rebuild;
 pub mod storage;
 pub mod strategy;
 pub mod sync;

@@ -9,6 +9,7 @@ use crate::ledger::{self, Balances};
 use crate::notify::{self, OrderChange, OrderEvent};
 use crate::order::BotOrder;
 use crate::pair::PairRules;
+use crate::rebuild;
 use crate::storage::{ActionRecord, ManagerState, Storage, TickerRecord, VirtualManager};
 use crate::strategy::{self, Action, Decision};
 use crate::sync::{self, SyncReport};
@@ -336,6 +337,7 @@ impl<E: Exchange> Bot<E> {
 
     pub async fn tick(&mut self) -> BotResult<TickReport> {
         self.ticks += 1;
+        self.rebuild_virtual_managers().await?;
         let mut managers = self.managers()?;
         // the pairs of the managers sharing one are already known
         if managers
@@ -388,6 +390,35 @@ impl<E: Exchange> Bot<E> {
         managers.retain(|it| !matches!(outcomes.get(&it.id), Some(Outcome::Deleted(_))));
         self.notify_daily_summary(&markets, &managers).await?;
         Ok(TickReport { sync, outcomes })
+    }
+
+    /// Once per database: the virtual managers found in the orders of Kraken it doesn't know,
+    /// lost with a previous database. Before any virtual manager is added, not to reuse their ids
+    async fn rebuild_virtual_managers(&self) -> BotResult<()> {
+        let Some(virtuals) = &self.config.virtual_managers else {
+            return Ok(());
+        };
+        if self.storage.state(rebuild::REBUILT)?.is_some() {
+            return Ok(());
+        }
+        let rebuilt = rebuild::rebuild(
+            &self.exchange,
+            &self.storage,
+            &self.config,
+            virtuals,
+            now_millis(),
+        )
+        .await?;
+        if !rebuilt.is_empty() {
+            tracing::warn!(
+                rebuilt = rebuilt.len(),
+                holding = rebuilt.iter().filter(|it| it.holds).count(),
+                "virtual managers rebuilt from the orders of Kraken"
+            );
+        }
+        self.storage
+            .set_state(rebuild::REBUILT, &self.exchange.now().to_string())?;
+        Ok(())
     }
 
     /// Per quote asset: what the account has available that no manager owns. The quote of the
