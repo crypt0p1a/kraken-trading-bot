@@ -11,3 +11,4 @@ managers.yml
 .env.example
 managers.example.yaml
 platforms
+docs
