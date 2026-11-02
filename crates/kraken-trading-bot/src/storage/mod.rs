@@ -8,6 +8,7 @@
 //! | `actions` | the decisions of the managers: orders placed or validated (dry run), idle reasons, errors |
 //! | `tickers` | the prices of the pairs of the managers, at each tick |
 //! | `sync_state` | where the synchronization of the orders is |
+//! | `virtual_managers` | the managers added by the bot, deleted ones included |
 //!
 //! The amounts are stored as text, to stay exact. The timestamps are UTC milliseconds, except the
 //! times of the orders which are the seconds of Kraken.
@@ -15,9 +16,11 @@
 mod journal;
 mod managers;
 mod orders;
+mod virtuals;
 
 pub use journal::{ActionRecord, TickerRecord};
 pub use managers::ManagerState;
+pub use virtuals::VirtualManager;
 
 use rusqlite::{Connection, OptionalExtension, params};
 use rust_decimal::Decimal;
@@ -35,7 +38,8 @@ pub enum StorageError {
 pub type Result<T> = std::result::Result<T, StorageError>;
 
 /// Migrations of the schema, applied in order: the version of the database is their count
-const MIGRATIONS: &[&str] = &[r#"
+const MIGRATIONS: &[&str] = &[
+    r#"
 CREATE TABLE orders (
     txid            TEXT PRIMARY KEY,
     manager_id      INTEGER NOT NULL,
@@ -120,7 +124,23 @@ CREATE TABLE sync_state (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
-"#];
+"#,
+    r#"
+CREATE TABLE virtual_managers (
+    id          INTEGER PRIMARY KEY,
+    template_id INTEGER NOT NULL,
+    pair        TEXT NOT NULL,
+    budget      TEXT NOT NULL,
+    buy_below   TEXT NOT NULL,
+    sell_above  TEXT NOT NULL,
+    mode        TEXT NOT NULL,
+    created_at  INTEGER NOT NULL,
+    reason      TEXT NOT NULL,
+    deleted_at  INTEGER,
+    deleted_why TEXT
+);
+"#,
+];
 
 pub struct Storage {
     connection: Connection,

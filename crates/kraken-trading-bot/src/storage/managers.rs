@@ -1,5 +1,6 @@
+use super::virtuals::mode_name;
 use super::{Result, Storage, decimal, optional_decimal};
-use crate::config::{ManagerConfig, ManagerMode};
+use crate::config::ManagerConfig;
 use crate::ledger::Balances;
 use rusqlite::params;
 use rust_decimal::Decimal;
@@ -17,13 +18,6 @@ pub struct ManagerState {
 impl ManagerState {
     pub fn value(&self) -> Decimal {
         self.balances.value(self.last_price)
-    }
-}
-
-fn mode_name(mode: ManagerMode) -> &'static str {
-    match mode {
-        ManagerMode::Active => "active",
-        ManagerMode::Closing => "closing",
     }
 }
 
@@ -129,6 +123,7 @@ impl Storage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::ManagerMode;
     use crate::planner::tests::d;
 
     fn state(at: i64, quote: &str) -> ManagerState {
