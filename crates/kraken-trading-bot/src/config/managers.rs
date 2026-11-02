@@ -60,7 +60,66 @@ pub struct BotConfig {
     /// Push notifications, none when missing
     #[serde(default)]
     pub notifications: Option<NotificationsConfig>,
+    /// Managers added by the bot when the account has money no manager uses, none when missing
+    #[serde(default)]
+    pub virtual_managers: Option<VirtualManagersConfig>,
     pub managers: Vec<ManagerConfig>,
+}
+
+/// Ids of the managers of the YAML file: below this when there are virtual managers, so that the
+/// id of a virtual manager tells which manager it copies
+pub const TEMPLATE_IDS: i32 = 1000;
+
+/// The managers the bot adds, copies of the managers of the YAML file. Their ids are
+/// `min_virtual_id + sequence * 1000 + id of the copied manager`
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VirtualManagersConfig {
+    /// First id of the virtual managers: at least 1000, above every id of the YAML file
+    pub min_virtual_id: i32,
+    /// Most virtual managers at the same time
+    #[serde(default = "default_max_virtual_managers")]
+    pub max: usize,
+}
+
+fn default_max_virtual_managers() -> usize {
+    5
+}
+
+/// The id of a virtual manager, decoded
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct VirtualId {
+    /// Order of creation, from 0
+    pub sequence: i32,
+    /// Id of the manager of the YAML file it copies
+    pub template: i32,
+}
+
+impl VirtualManagersConfig {
+    /// The id of the virtual manager, None when it doesn't fit in a userref
+    pub fn encode(&self, id: VirtualId) -> Option<i32> {
+        if !(1..TEMPLATE_IDS).contains(&id.template) || id.sequence < 0 {
+            return None;
+        }
+        id.sequence
+            .checked_mul(TEMPLATE_IDS)?
+            .checked_add(id.template)?
+            .checked_add(self.min_virtual_id)
+    }
+
+    /// What the id of a virtual manager says, None when it isn't one
+    pub fn decode(&self, id: i32) -> Option<VirtualId> {
+        let offset = id.checked_sub(self.min_virtual_id).filter(|it| *it >= 0)?;
+        let template = offset % TEMPLATE_IDS;
+        (template > 0).then_some(VirtualId {
+            sequence: offset / TEMPLATE_IDS,
+            template,
+        })
+    }
+
+    pub fn is_virtual(&self, id: i32) -> bool {
+        id >= self.min_virtual_id
+    }
 }
 
 /// ntfy server: the topic, and its access token if any, are in the environment
@@ -168,11 +227,28 @@ impl BotConfig {
             }
         }
 
+        if let Some(virtuals) = &self.virtual_managers {
+            if virtuals.min_virtual_id < TEMPLATE_IDS {
+                return invalid(format!(
+                    "virtual_managers: min_virtual_id must be at least {TEMPLATE_IDS}, got {}",
+                    virtuals.min_virtual_id
+                ));
+            }
+            if virtuals.max < 1 {
+                return invalid("virtual_managers: max must be at least 1".into());
+            }
+        }
+
         let mut ids = HashSet::new();
         for manager in &self.managers {
             let id = manager.id;
             if id < 1 {
                 return invalid(format!("manager {id}: the id must be from 1 to 2147483647"));
+            }
+            if self.virtual_managers.is_some() && id >= TEMPLATE_IDS {
+                return invalid(format!(
+                    "manager {id}: with virtual_managers, the ids must be below {TEMPLATE_IDS}"
+                ));
             }
             if !ids.insert(id) {
                 return invalid(format!("manager {id}: the id is used twice"));
@@ -396,6 +472,116 @@ managers: []",
         assert!(BotConfig::parse("tick_interval: 10s\nmanagers: []").is_err());
         assert!(BotConfig::parse("buy_order_timeout: 30s\nmanagers: []").is_err());
         assert!(BotConfig::parse("tick_interval: often\nmanagers: []").is_err());
+    }
+
+    #[test]
+    fn reads_the_virtual_managers() {
+        let config = BotConfig::parse(
+            "virtual_managers: {min_virtual_id: 1000000, max: 3}
+managers: [{id: 999, pair: XBTUSD, budget: 30, buy_below: 1, sell_above: 1.5}]",
+        )
+        .unwrap();
+        let virtuals = config.virtual_managers.unwrap();
+        assert_eq!(virtuals.min_virtual_id, 1_000_000);
+        assert_eq!(virtuals.max, 3);
+
+        let defaults =
+            BotConfig::parse("virtual_managers: {min_virtual_id: 5000}\nmanagers: []").unwrap();
+        assert_eq!(defaults.virtual_managers.unwrap().max, 5);
+        assert_eq!(
+            BotConfig::parse("managers: []").unwrap().virtual_managers,
+            None
+        );
+    }
+
+    #[test]
+    fn rejects_the_invalid_virtual_managers() {
+        let manager =
+            "managers: [{id: ID, pair: XBTUSD, budget: 30, buy_below: 1, sell_above: 1.5}]";
+        for (yaml, id, expected) in [
+            (
+                "virtual_managers: {min_virtual_id: 999}",
+                "1",
+                "min_virtual_id",
+            ),
+            (
+                "virtual_managers: {min_virtual_id: 1000000, max: 0}",
+                "1",
+                "max",
+            ),
+            (
+                "virtual_managers: {min_virtual_id: 1000000}",
+                "1000",
+                "below 1000",
+            ),
+            (
+                "virtual_managers: {min_virtual_id: 1000000}",
+                "1000001",
+                "below 1000",
+            ),
+            (
+                "virtual_managers: {min_virtual_id: 1000000, maximum: 2}",
+                "1",
+                "maximum",
+            ),
+            ("virtual_managers: {}", "1", "min_virtual_id"),
+        ] {
+            let text = format!("{yaml}\n{}", manager.replace("ID", id));
+            let error = BotConfig::parse(&text).unwrap_err().to_string();
+            assert!(error.contains(expected), "{yaml}: {error}");
+        }
+        // without virtual managers, every id is allowed
+        assert!(BotConfig::parse(&manager.replace("ID", "1000001")).is_ok());
+    }
+
+    #[test]
+    fn encodes_the_copied_manager_in_the_id() {
+        let virtuals = VirtualManagersConfig {
+            min_virtual_id: 1_000_000,
+            max: 5,
+        };
+        let id = VirtualId {
+            sequence: 3,
+            template: 2,
+        };
+        assert_eq!(virtuals.encode(id), Some(1_003_002));
+        assert_eq!(virtuals.decode(1_003_002), Some(id));
+        assert_eq!(
+            virtuals.decode(1_000_999),
+            Some(VirtualId {
+                sequence: 0,
+                template: 999
+            })
+        );
+
+        // not a virtual manager, or no copied manager
+        assert_eq!(virtuals.decode(999_999), None);
+        assert_eq!(virtuals.decode(1_003_000), None);
+        assert!(!virtuals.is_virtual(42));
+        assert!(virtuals.is_virtual(1_003_002));
+
+        // the template is a manager of the YAML file, the id a userref
+        assert_eq!(
+            virtuals.encode(VirtualId {
+                sequence: 0,
+                template: 0
+            }),
+            None
+        );
+        assert_eq!(
+            virtuals.encode(VirtualId {
+                sequence: 0,
+                template: 1000
+            }),
+            None
+        );
+        assert_eq!(
+            virtuals.encode(VirtualId {
+                sequence: 2_200_000,
+                template: 1
+            }),
+            None
+        );
     }
 
     #[test]
