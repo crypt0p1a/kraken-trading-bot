@@ -280,3 +280,41 @@ async fn the_notifications_speak_the_language_of_the_configuration() {
         notified[1].1
     );
 }
+
+#[tokio::test]
+async fn the_orders_of_a_virtual_manager_are_notified_and_summed_up() {
+    // 100 USD for manager 1, 100 for a copy of it
+    let (mut bot, recorded) = bot(
+        exchange("200"),
+        false,
+        "  events: [placed, filled, daily_summary]\n  daily_summary_hour: 20
+virtual_managers: {min_virtual_id: 1000000}",
+        ONE,
+    )
+    .await;
+
+    bot.tick().await.unwrap();
+    assert_eq!(
+        titles(&recorded),
+        ["Buy placed · #1 XBTUSD", "Buy placed · #1000001 XBTUSD"]
+    );
+
+    bot.exchange().set_price(BTC, d("49400"));
+    bot.tick().await.unwrap();
+    let notified = titles(&recorded);
+    assert!(
+        notified.contains(&"Buy filled · #1000001 XBTUSD".to_string()),
+        "{notified:?}"
+    );
+
+    // 20:00
+    bot.exchange().advance(12.0 * 3600.0);
+    bot.tick().await.unwrap();
+    let summary = messages(&recorded)
+        .into_iter()
+        .find(|(title, _)| title == "Daily summary")
+        .unwrap()
+        .1;
+    assert!(summary.contains("#1 XBTUSD"), "{summary}");
+    assert!(summary.contains("#1000001 XBTUSD"), "{summary}");
+}
