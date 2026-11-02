@@ -1,5 +1,8 @@
 target
 dist
+# the cache mounts of the CI, restored next to the sources
+cargo-registry
+cargo-target
 .git
 .github
 # secrets and local state: never in the build context
