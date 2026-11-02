@@ -94,6 +94,23 @@ virtual_managers:
   for what its buy cost + `fallback_sell_above`% (1.5 by default), fees included.
 - They are stored in the `virtual_managers` table of the database, deleted ones included.
 
+## Indicators of the market
+
+At each tick, the bot reads the candles of 15 minutes of the last 24 hours of each pair (public
+OHLC of Kraken) and computes, with [`yata`](https://crates.io/crates/yata):
+
+| Indicator | |
+|-----------|-|
+| `atr_percent` | average true range of 14 candles, in % of the close: how much a candle moves |
+| `ema_fast`, `ema_slow` | EMAs of the closes, 3 and 12 hours |
+| `slope_24h_percent` | slope of the linear regression of the closes over 24 hours, in % per 24 hours |
+| `range_24h_percent`, `change_24h_percent` | highest high minus lowest low, and the change, over 24 hours |
+
+They're logged (`indicators`, with a trend: rising, falling or mixed) and recorded in the
+`indicators` table, once 12 hours of candles exist. **Nothing decides on them yet**: they're
+there to see what they say before tying `buy_below` to the volatility or pausing the buys in a
+falling market. A failure to read the candles is only logged.
+
 ## Running it
 
 ```sh
@@ -155,6 +172,7 @@ The SQLite database (`/data/kraken-bot.sqlite`) is there to work with what the b
 | `manager_snapshots` | the state of each manager at each tick |
 | `actions` | the decisions: orders placed or validated (dry run), idle reasons, errors |
 | `tickers` | the prices of the pairs of the managers, at each tick |
+| `indicators` | the [indicators](#indicators-of-the-market) of the pairs, at each tick |
 | `sync_state` | where the synchronization of the orders is |
 | `virtual_managers` | the [virtual managers](#virtual-managers), deleted ones included |
 
@@ -174,6 +192,7 @@ docker run --rm -v kraken-rust_kraken-bot-data:/data -it keinos/sqlite3 sqlite3 
   closing managers, missing funds, orphans, restart without database, refused orders, dry run,
   600 ticks of a random market where every cycle makes money, only limit orders)
 - `trailing_buy.rs`: the buys placed again when the price rises, only the ones not filled at all
+- `indicators.rs`: the indicators recorded once 12 hours of candles exist
 - `virtual_managers.rs`: the virtual managers on a simulated Kraken (added with the margin,
   deleted without money or once closed, rebuilt after the loss of the database)
 - `kraken_wiring.rs`: the requests sent to a mocked Kraken
