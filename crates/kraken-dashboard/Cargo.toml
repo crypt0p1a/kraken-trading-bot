@@ -17,6 +17,7 @@ rust_decimal.workspace = true
 
 [dev-dependencies]
 # the demo database and the tests are written by the storage of the bot itself
+fastrand.workspace = true
 kraken-api.workspace = true
 kraken-trading-bot.workspace = true
 rusqlite.workspace = true
