@@ -610,3 +610,50 @@ async fn a_rebuild_failing_doesnt_stop_the_managers_and_is_tried_again() {
     bot.tick().await.unwrap();
     assert_eq!(bot.storage().virtual_ids().unwrap(), vec![VIRTUAL]);
 }
+
+#[tokio::test]
+async fn the_ids_used_up_stop_only_the_virtual_managers() {
+    // the last id taken: the next sequence doesn't fit in a userref
+    let sequence = (i32::MAX - kraken_trading_bot::config::MIN_VIRTUAL_ID) / 1000;
+    let last = VirtualId {
+        sequence,
+        template: 1,
+    }
+    .encode()
+    .unwrap();
+    assert_eq!(
+        VirtualId {
+            sequence: sequence + 1,
+            template: 1
+        }
+        .encode(),
+        None
+    );
+    let mut bot = bot(exchange("1000"), "virtual_managers: true", ONE).await;
+    bot.storage()
+        .add_virtual_manager(&kraken_trading_bot::storage::VirtualManager {
+            config: ManagerConfig {
+                id: last,
+                pair: "XBTUSD".into(),
+                budget: d("30"),
+                buy_below: d("1"),
+                sell_above: d("1.5"),
+                mode: kraken_trading_bot::config::ManagerMode::Active,
+            },
+            template_id: 1,
+            created_at: 0,
+            reason: "the last one".into(),
+        })
+        .unwrap();
+    bot.storage()
+        .delete_virtual_manager(last, 0, "held nothing")
+        .unwrap();
+
+    // money for many: none added, manager 1 trades
+    let report = bot.tick().await.unwrap();
+    assert!(
+        matches!(report.outcomes[&1], Outcome::Placed { .. }),
+        "{report:?}"
+    );
+    assert!(virtuals(&bot).is_empty());
+}

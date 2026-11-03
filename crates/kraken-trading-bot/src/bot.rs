@@ -559,12 +559,18 @@ impl<E: Exchange> Bot<E> {
             .last_virtual_id()?
             .and_then(VirtualId::decode)
             .map_or(0, |it| it.sequence + 1);
-        let id = VirtualId {
+        // the ids are used up: no more virtual managers, the others go on
+        let Some(id) = (VirtualId {
             sequence,
             template: template.id,
-        }
-        .encode()
-        .ok_or_else(|| BotError::Config("no id left for a virtual manager".into()))?;
+        })
+        .encode() else {
+            tracing::warn!(
+                sequence,
+                "no id left for a virtual manager: none is added anymore"
+            );
+            return Ok(None);
+        };
 
         let (quote, margin) = margin_of(&template);
         let reason = format!(
