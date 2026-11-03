@@ -144,10 +144,10 @@ cargo run --release -p kraken-dashboard -- kraken-bot.sqlite   # on a copy of th
 | Panel | Content |
 |-------|---------|
 | header | LIVE or DRY RUN (from the last order), the time since the last tick (STALE after 30 min), the UTC clock, the prices of the pairs scrolling |
-| tiles | equity, P&L (value - budget), realized by the sells, unrealized, win rate, fees and volume, open orders; the other quote currencies apart |
-| managers | value, P&L, position, entry price and the last price against it, open order and its fill, the trend of the value |
+| tiles | portfolio: the whole account, what the managers are worth and the money they don't use (equity of the manager when focused on one), P&L (value - budget), realized by the sells, unrealized, win rate, fees and volume, open orders; the other quote currencies apart |
+| managers | value, P&L, position, entry price and the last price against it, open order, how far the market is from it (`TO FILL`, ▼ the drop a buy waits for, ▲ the rise a sell waits for) and its fill, the trend of the value |
 | chart | `c` switches: the P&L over time, the price of the pair with the entry price and the open orders, the P&L of each sell |
-| orders | the blotter: side, price, volume, fill, cost, fee, status |
+| orders | the blotter: side, price, how far the market is from an open order, volume, fill, cost, fee, status |
 | markets | the last price, 24 hours change, ATR, range and trend of the [indicators](#indicators-of-the-market), the spread |
 | tape | the decisions: orders placed, refused (✗), trailing, virtual managers; `i` shows the idle ones |
 
@@ -211,6 +211,7 @@ The SQLite database (`/data/kraken-bot.sqlite`) is there to work with what the b
 | `actions` | the decisions: orders placed or validated (dry run), idle reasons, errors |
 | `tickers` | the prices of the pairs of the managers, at each tick |
 | `indicators` | the [indicators](#indicators-of-the-market) of the pairs, at each tick |
+| `account_snapshots` | what the whole account is worth at each tick, per quote currency of the managers: the quote, plus the bases of their pairs at the last price |
 | `sync_state` | where the synchronization of the orders is |
 | `virtual_managers` | the [virtual managers](#virtual-managers), deleted ones included |
 

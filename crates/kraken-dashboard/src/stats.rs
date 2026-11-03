@@ -1,7 +1,7 @@
 //! What the dashboard computes from the data of the bot: the P&L realized by the sells, the
 //! totals by quote currency, the P&L over time, the pair of each manager
 
-use crate::data::{Data, Manager, Market, Order, Side, Snapshot, percent, to_f64};
+use crate::data::{Account, Data, Manager, Market, Order, Side, Snapshot, percent, to_f64};
 use rust_decimal::Decimal;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -24,6 +24,14 @@ pub fn canonical(name: &str) -> String {
         return format!("{}{}", &name[1..4], &name[5..8]);
     }
     name
+}
+
+/// An asset as the pairs name it: the legacy "ZEUR" and "XXBT" of Kraken are "EUR" and "XBT"
+pub fn asset(name: &str) -> &str {
+    match name.as_bytes() {
+        [b'X' | b'Z', _, _, _] => &name[1..],
+        _ => name,
+    }
 }
 
 /// The base and the quote of a pair: ("XBT", "USD") for "XBTUSD"
@@ -261,6 +269,30 @@ impl Model {
             .map(|index| &self.data.markets[*index])
     }
 
+    /// How far the market is from an open order, in % of the last price: what the price has to
+    /// move for the order to fill, negative for a buy below the market. None for a closed order
+    pub fn to_fill(&self, order: &Order) -> Option<f64> {
+        if order.is_final {
+            return None;
+        }
+        let limit = to_f64(order.limit_price?);
+        let last = self
+            .market_of(order.manager_id)
+            .map(|it| it.last)
+            .or_else(|| self.manager(order.manager_id).map(|it| it.last_price))
+            .map(to_f64)
+            .filter(|it| *it > 0.0)?;
+        Some((limit - last) / last * 100.0)
+    }
+
+    /// The last value of the whole account in the quote ("EUR"), if the bot records it
+    pub fn account(&self, quote: &str) -> Option<&Account> {
+        self.data
+            .accounts
+            .iter()
+            .find(|it| asset(&it.quote) == quote)
+    }
+
     pub fn open_orders_of(&self, id: i32) -> impl Iterator<Item = &Order> {
         self.data
             .orders
@@ -338,6 +370,14 @@ pub fn pnl_series(snapshots: &[&Snapshot], budgets: &HashMap<i32, f64>) -> Vec<(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn names_the_assets_as_the_pairs() {
+        assert_eq!(asset("ZEUR"), "EUR");
+        assert_eq!(asset("XXBT"), "XBT");
+        assert_eq!(asset("USDC"), "USDC");
+        assert_eq!(asset("SOL"), "SOL");
+    }
     use std::str::FromStr;
 
     fn d(text: &str) -> Decimal {

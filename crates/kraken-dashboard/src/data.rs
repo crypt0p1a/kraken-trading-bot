@@ -170,6 +170,25 @@ pub struct Market {
     pub prices: Vec<(i64, f64)>,
 }
 
+/// What the whole account is worth in a quote currency, managers or not
+#[derive(Debug, Clone, PartialEq)]
+pub struct Account {
+    /// Kraken name of the asset, e.g. "ZEUR"
+    pub quote: String,
+    /// UTC milliseconds
+    pub at: i64,
+    /// The quote in the account, held by orders or not
+    pub cash: Decimal,
+    /// The bases of the pairs of the managers in this quote, at their last price
+    pub holdings: Decimal,
+}
+
+impl Account {
+    pub fn value(&self) -> Decimal {
+        self.cash + self.holdings
+    }
+}
+
 /// Everything shown, read at once
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Data {
@@ -181,6 +200,8 @@ pub struct Data {
     /// Most recent first
     pub actions: Vec<Action>,
     pub markets: Vec<Market>,
+    /// The last value of the account per quote; empty for the databases older than it
+    pub accounts: Vec<Account>,
     /// Whether the last order was only validated by Kraken (dry run), None before any order
     pub dry_run: Option<bool>,
     /// Version of the schema of the bot
@@ -279,11 +300,31 @@ impl Database {
             actions: self.actions().map_err(sql)?,
             dry_run: self.dry_run().map_err(sql)?,
             markets: self.markets(start, bucket).map_err(sql)?,
+            accounts: self.accounts().map_err(sql)?,
             version: self.version,
             since: start,
         };
         transaction.finish().map_err(sql)?;
         Ok(data)
+    }
+
+    fn accounts(&self) -> rusqlite::Result<Vec<Account>> {
+        if !self.tables.contains("account_snapshots") {
+            return Ok(Vec::new());
+        }
+        let mut statement = self.connection.prepare_cached(
+            "SELECT quote, at, cash, holdings FROM account_snapshots
+             WHERE at = (SELECT MAX(at) FROM account_snapshots) ORDER BY quote",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(Account {
+                quote: row.get(0)?,
+                at: row.get(1)?,
+                cash: decimal(row, 2)?,
+                holdings: decimal(row, 3)?,
+            })
+        })?;
+        rows.collect()
     }
 
     fn managers(&self) -> rusqlite::Result<Vec<Manager>> {

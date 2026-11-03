@@ -87,7 +87,7 @@ pub fn render_managers(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    let spark = 12;
+    let spark = 10;
     let rows: Vec<Row> = model
         .data
         .managers
@@ -130,6 +130,12 @@ pub fn render_managers(frame: &mut Frame, app: &App, area: Rect) {
             };
 
             let order = model.open_orders_of(manager.id).last();
+            let gap = match order.and_then(|it| Some((model.to_fill(it)?, it.side))) {
+                Some((percent, side)) => {
+                    Cell::from(Line::from(to_fill(percent, side)).right_aligned())
+                }
+                None => right("—", theme::faint()),
+            };
             let order = match order {
                 Some(order) => {
                     let (name, color) = side(order.side);
@@ -178,6 +184,7 @@ pub fn render_managers(frame: &mut Frame, app: &App, area: Rect) {
                 entry,
                 versus,
                 order,
+                gap,
                 left(
                     format::sparkline(&values, spark),
                     Style::new().fg(if change == 0.0 {
@@ -205,6 +212,7 @@ pub fn render_managers(frame: &mut Frame, app: &App, area: Rect) {
         Constraint::Length(10),
         Constraint::Length(8),
         Constraint::Fill(1),
+        Constraint::Length(7),
         Constraint::Length(spark as u16),
     ];
     let header = header(&[
@@ -217,6 +225,7 @@ pub fn render_managers(frame: &mut Frame, app: &App, area: Rect) {
         ("ENTRY", true),
         ("VS ENTRY", true),
         ("OPEN ORDER", false),
+        ("TO FILL", true),
         ("TREND", false),
     ]);
     let mut state = TableState::new().with_selected(Some(app.cursor));
@@ -232,6 +241,25 @@ fn side(side: Side) -> (&'static str, ratatui::style::Color) {
         Side::Buy => ("BUY", UP),
         Side::Sell => ("SELL", DOWN),
     }
+}
+
+/// How far the market is from an open order: ▼1.41% for a buy the price has to drop to, in gold
+/// once it's close, in cyan when the market is already through it
+fn to_fill(percent: f64, side: Side) -> Span<'static> {
+    let arrow = if percent < 0.0 { "▼" } else { "▲" };
+    let text = format!("{arrow}{:.2}%", percent.abs());
+    let through = match side {
+        Side::Buy => percent >= 0.0,
+        Side::Sell => percent <= 0.0,
+    };
+    let style = if through {
+        theme::bold(CYAN)
+    } else if percent.abs() < 0.25 {
+        theme::bold(GOLD)
+    } else {
+        theme::dim()
+    };
+    Span::styled(text, style)
 }
 
 /// ██████░░░░ in the color of the side
@@ -291,6 +319,12 @@ pub fn render_orders(frame: &mut Frame, app: &App, area: Rect) {
                 left(name, theme::bold(color)),
                 left(canonical(&order.pair), Style::new().fg(AMBER)),
                 right(format::price(price), theme::bold(TEXT)),
+                match app.model.to_fill(order) {
+                    Some(percent) => {
+                        Cell::from(Line::from(to_fill(percent, order.side)).right_aligned())
+                    }
+                    None => right("—", theme::faint()),
+                },
                 right(format::volume(to_f64(order.volume)), theme::text()),
                 Cell::from(fill_bar(order, 6)),
                 if order.volume_executed.is_zero() {
@@ -319,6 +353,7 @@ pub fn render_orders(frame: &mut Frame, app: &App, area: Rect) {
         Constraint::Length(4),
         Constraint::Length(7),
         Constraint::Length(10),
+        Constraint::Length(8),
         Constraint::Length(10),
         Constraint::Length(11),
         Constraint::Length(8),
@@ -331,6 +366,7 @@ pub fn render_orders(frame: &mut Frame, app: &App, area: Rect) {
         ("SIDE", false),
         ("PAIR", false),
         ("PRICE", true),
+        ("TO FILL", true),
         ("VOLUME", true),
         ("FILLED", false),
         ("COST", true),

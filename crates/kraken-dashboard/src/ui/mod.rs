@@ -68,7 +68,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     render_tiles(frame, app, tiles);
 
     let [managers, chart] =
-        Layout::horizontal([Constraint::Percentage(57), Constraint::Percentage(43)]).areas(middle);
+        Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)]).areas(middle);
     panels::render_managers(frame, app, managers);
     charts::render(frame, app, chart);
 
@@ -256,15 +256,48 @@ fn render_tiles(frame: &mut Frame, app: &App, area: Rect) {
     let unrealized = to_f64(totals.unrealized());
     let areas: [Rect; 7] = Layout::horizontal([Constraint::Fill(1); 7]).areas(area);
 
-    let mut equity = vec![Span::styled(
-        format!("budget {}", format::money(to_f64(totals.budget))),
-        theme::dim(),
-    )];
+    // the whole account, managers or not, when the bot records it
+    let account = app
+        .focus()
+        .is_none()
+        .then(|| app.model.account(quote))
+        .flatten();
+    let (name, value, mut detail) = match account {
+        Some(account) => {
+            let free = to_f64(account.value() - totals.value);
+            (
+                "PORTFOLIO",
+                account.value(),
+                vec![
+                    Span::styled(
+                        format!("mgrs {}", format::money(to_f64(totals.value))),
+                        theme::dim(),
+                    ),
+                    Span::styled(
+                        format!(" · free {}", format::money(free)),
+                        Style::new().fg(if free >= 1.0 { theme::GOLD } else { theme::DIM }),
+                    ),
+                ],
+            )
+        }
+        None => (
+            "EQUITY",
+            totals.value,
+            vec![Span::styled(
+                format!("budget {}", format::money(to_f64(totals.budget))),
+                theme::dim(),
+            )],
+        ),
+    };
     // the other quote currencies don't add up with the main one
     if app.focus().is_none() {
         for other in app.model.totals.iter().skip(1) {
-            equity.push(Span::styled(
-                format!(" + {} {}", format::money(to_f64(other.value)), other.quote),
+            let value = app
+                .model
+                .account(&other.quote)
+                .map_or(other.value, |it| it.value());
+            detail.push(Span::styled(
+                format!(" + {} {}", format::money(to_f64(value)), other.quote),
                 Style::new().fg(theme::VIOLET),
             ));
         }
@@ -272,12 +305,12 @@ fn render_tiles(frame: &mut Frame, app: &App, area: Rect) {
     tile(
         frame,
         areas[0],
-        "EQUITY",
+        name,
         Span::styled(
-            format!("{} {quote}", format::money(to_f64(totals.value))),
+            format!("{} {quote}", format::money(to_f64(value))),
             theme::bold(TEXT),
         ),
-        Line::from(equity),
+        Line::from(detail),
     );
     tile(
         frame,

@@ -7,7 +7,9 @@ use kraken_dashboard::data::Database;
 use kraken_trading_bot::config::{ManagerConfig, ManagerMode};
 use kraken_trading_bot::ledger;
 use kraken_trading_bot::order::BotOrder;
-use kraken_trading_bot::storage::{ActionRecord, ManagerState, Storage, TickerRecord};
+use kraken_trading_bot::storage::{
+    AccountRecord, ActionRecord, ManagerState, Storage, TickerRecord,
+};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
@@ -180,6 +182,15 @@ fn write(path: &Path) -> Storage {
         txid: txid.map(Into::into),
         error: error.map(Into::into),
     };
+    // 60 of budget, 20 in the account no manager uses
+    storage
+        .record_account(&AccountRecord {
+            at: now - 300_000,
+            quote: "ZUSD".into(),
+            cash: d("57.23"),
+            holdings: d("22.83"),
+        })
+        .unwrap();
     storage.record_action(&action("idle", None, None)).unwrap();
     storage
         .record_action(&action("sell", None, Some("EOrder:Insufficient funds")))
@@ -245,6 +256,17 @@ fn reads_what_the_bot_wrote() {
     assert_eq!(totals.wins, 1);
     assert_eq!(totals.pnl(), totals.realized + totals.unrealized());
 
+    // the whole account, and how far the open buy is from the market: 75500 for 76100
+    assert_eq!(model.account("USD").unwrap().value(), d("80.06"));
+    let open = model.data.orders.iter().find(|it| it.txid == "O3").unwrap();
+    let gap = model.to_fill(open).unwrap();
+    assert!(
+        (gap - (75500.0 - 76100.0) / 76100.0 * 100.0).abs() < 1e-9,
+        "{gap}"
+    );
+    let filled = model.data.orders.iter().find(|it| it.txid == "O1").unwrap();
+    assert_eq!(model.to_fill(filled), None);
+
     // the idle decisions are hidden by default
     assert_eq!(app.actions().len(), 2);
     assert_eq!(app.model.pnl_series(&[1, 2]).len(), 2);
@@ -260,7 +282,6 @@ fn draws_the_desk() {
     for expected in [
         "KRAKEN",
         "LIVE",
-        "EQUITY",
         "MANAGERS",
         "ORDERS",
         "MARKETS",
@@ -272,6 +293,10 @@ fn draws_the_desk() {
         "EOrder:Insufficient funds",
         "WIN RATE",
         "100.0%",
+        "PORTFOLIO",
+        "80.06 USD",
+        "TO FILL",
+        "▼0.79%",
     ] {
         assert!(text.contains(expected), "no {expected} in\n{text}");
     }
@@ -283,7 +308,10 @@ fn draws_the_desk() {
     }
     app.on_key(KeyEvent::from(KeyCode::Enter));
     assert_eq!(app.focus().map(|it| it.id), Some(1));
-    assert!(screen(&app, 180, 48).contains("MANAGER #1"));
+    // a manager alone: what it's worth, not the account
+    let focused = screen(&app, 180, 48);
+    assert!(focused.contains("MANAGER #1"), "{focused}");
+    assert!(focused.contains("EQUITY"), "{focused}");
     app.on_key(KeyEvent::from(KeyCode::Char('?')));
     assert!(screen(&app, 120, 32).contains("HELP"));
     assert!(screen(&app, 60, 20).contains("enlarge the terminal"));
