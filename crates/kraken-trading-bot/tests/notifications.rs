@@ -337,3 +337,29 @@ async fn a_buy_placed_again_by_the_trailing_isnt_notified_as_ended() {
     bot.tick().await.unwrap();
     assert_eq!(titles(&recorded)[0], "Buy expired · #1 XBTUSD");
 }
+
+#[tokio::test]
+async fn a_summary_failing_doesnt_fail_the_tick() {
+    let directory = std::env::temp_dir().join(format!("summary-{}", std::process::id()));
+    let path = directory.join("bot.sqlite");
+    let config = BotConfig::parse(&format!(
+        "dry_run: false\nnotifications:\n  ntfy: {{}}\n  events: [daily_summary]\n  daily_summary_hour: 0\nmanagers:\n{ONE}"
+    ))
+    .unwrap();
+    let (notifier, recorded) = Notifier::recording();
+    let mut bot =
+        Bot::new(exchange("1000"), Storage::open(&path).unwrap(), config).with_notifier(notifier);
+    bot.prepare().await.unwrap();
+
+    // the state of the managers can't be read anymore: neither saved nor summed up
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute_batch("DROP TABLE managers")
+        .unwrap();
+    let report = bot.tick().await.unwrap();
+    assert!(titles(&recorded).is_empty());
+    assert!(report.outcomes.contains_key(&1));
+
+    drop(bot);
+    std::fs::remove_dir_all(directory).unwrap();
+}

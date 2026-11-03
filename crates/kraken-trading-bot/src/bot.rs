@@ -406,8 +406,13 @@ impl<E: Exchange> Bot<E> {
         let ids = managers.iter().map(|it| it.id).collect();
         let sync =
             sync::synchronize(&self.exchange, &self.storage, &ids, self.exchange.now()).await?;
-        self.notify_order_events(&sync.events, &markets, &managers)
-            .await?;
+        // the orders are synchronized already: a notification failing doesn't stop the managers
+        if let Err(error) = self
+            .notify_order_events(&sync.events, &markets, &managers)
+            .await
+        {
+            tracing::error!(%error, "the changes of the orders couldn't be notified");
+        }
 
         // what the account has, decreased locally when orders are placed
         let mut available: HashMap<String, Decimal> = self
@@ -443,7 +448,10 @@ impl<E: Exchange> Bot<E> {
         }
 
         managers.retain(|it| !matches!(outcomes.get(&it.id), Some(Outcome::Deleted(_))));
-        self.notify_daily_summary(&markets, &managers).await?;
+        // the orders are placed already: the tick is done whatever the summary
+        if let Err(error) = self.notify_daily_summary(&markets, &managers).await {
+            tracing::error!(%error, "the daily summary couldn't be sent");
+        }
         Ok(TickReport { sync, outcomes })
     }
 
