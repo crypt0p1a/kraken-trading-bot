@@ -666,3 +666,51 @@ async fn the_ids_used_up_stop_only_the_virtual_managers() {
     );
     assert!(virtuals(&bot).is_empty());
 }
+
+/// VIRTUAL bought 0.00005 BTC (below the 0.0001 of the pair) before its buy expired
+async fn virtual_manager_with_dust() -> Bot<SimulatedExchange> {
+    let mut bot = with_a_virtual_manager().await;
+    let txid = bot
+        .exchange()
+        .orders()
+        .into_iter()
+        .find(|it| it.userref == Some(VIRTUAL as i64))
+        .unwrap()
+        .txid;
+    bot.exchange().fill(&txid, Some(d("0.00005")));
+    bot.exchange().advance(13.0 * 3600.0);
+    // no money left for a buy
+    let rest = bot.exchange().balance("ZUSD");
+    bot.exchange().deposit("ZUSD", -rest);
+    bot.tick().await.unwrap();
+    bot
+}
+
+#[tokio::test]
+async fn a_virtual_manager_keeps_what_it_couldnt_sell() {
+    let mut bot = virtual_manager_with_dust().await;
+    // no money for its buy: kept, with its BTC
+    for _ in 0..5 {
+        let outcome = outcome(&mut bot, VIRTUAL).await;
+        assert!(
+            matches!(&outcome, Outcome::Idle(reason) if reason.contains("too small to be sold")),
+            "{outcome:?}"
+        );
+    }
+    assert_eq!(virtuals(&bot).len(), 1);
+}
+
+#[tokio::test]
+async fn a_closing_virtual_manager_keeps_what_it_couldnt_sell() {
+    let bot = virtual_manager_with_dust().await;
+    let mut bot = reconfigure(
+        bot,
+        "\n  - {id: 1, pair: XBTUSD, budget: 30, buy_below: 1, sell_above: 1.5, mode: closing}",
+    )
+    .await;
+    for _ in 0..3 {
+        let outcome = outcome(&mut bot, VIRTUAL).await;
+        assert!(matches!(outcome, Outcome::Idle(_)), "{outcome:?}");
+    }
+    assert_eq!(virtuals(&bot).len(), 1);
+}

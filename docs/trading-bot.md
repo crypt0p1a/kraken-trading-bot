@@ -83,8 +83,9 @@ virtual_managers: true
   then be below 1000, which the check of the configuration enforces. An id is never reused.
 - **Deleted** when the account can't pay for their buy 3 ticks in a row, money withdrawn for
   instance: a virtual manager buys only when it holds nothing, so it's deleted with nothing but
-  its quote, which goes back to the margin. One which holds a position waits for its sale. The
-  managers of the YAML file are never deleted.
+  its quote, which goes back to the margin. One which holds a position waits for its sale, one
+  which keeps an amount too small to be sold is kept with it. The managers of the YAML file are
+  never deleted.
 - **Rebuilt** when the database doesn't know them, lost for instance: at the first tick, the bot
   searches every order of the account (open and closed) for the userrefs of virtual managers. The
   id tells the copied manager, the prices of the orders check its parameters: the budget from the

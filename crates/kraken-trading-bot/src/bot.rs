@@ -641,13 +641,17 @@ impl<E: Exchange> Bot<E> {
             rules: &market.rules,
         });
 
+        // too small to be sold, a virtual manager isn't deleted with it: it's still its own
+        let base = balances.base_available + balances.base_in_sell_order;
         match action {
             Action::Wait => Ok(Outcome::Waited),
-            // closing, with nothing left to sell: a virtual manager is done
+            // closing, with nothing left: a virtual manager is done
             Action::Idle(reason)
-                if self.is_virtual(manager) && manager.mode == ManagerMode::Closing =>
+                if self.is_virtual(manager)
+                    && manager.mode == ManagerMode::Closing
+                    && base.is_zero() =>
             {
-                self.delete_virtual(manager, format!("{reason}, nothing left to sell"))
+                self.delete_virtual(manager, format!("{reason}, nothing left"))
             }
             Action::Idle(reason) => self.idle(manager, reason),
             Action::Sell { amount, price } => {
@@ -667,7 +671,7 @@ impl<E: Exchange> Bot<E> {
                         market.rules.quote_asset,
                         cost.round_dp(8).normalize()
                     );
-                    return self.starve(manager, reason);
+                    return self.starve(manager, reason, base);
                 }
                 let outcome = self
                     .place(manager, market, OrderSide::Buy, amount, price, &balances)
@@ -682,9 +686,18 @@ impl<E: Exchange> Bot<E> {
 
     /// The account can't pay for the buy of the manager, which holds nothing: a virtual manager is
     /// deleted after `STARVED_TICKS` ticks in a row, its money going back to the margin
-    fn starve(&self, manager: &ManagerConfig, reason: String) -> BotResult<Outcome> {
+    fn starve(&self, manager: &ManagerConfig, reason: String, base: Decimal) -> BotResult<Outcome> {
         if !self.is_virtual(manager) {
             return self.idle(manager, reason);
+        }
+        if !base.is_zero() {
+            return self.idle(
+                manager,
+                format!(
+                    "{reason}, keeps {} too small to be sold: not deleted",
+                    base.normalize()
+                ),
+            );
         }
 
         let count = {
