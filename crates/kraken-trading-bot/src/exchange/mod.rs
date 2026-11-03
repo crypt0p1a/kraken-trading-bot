@@ -57,6 +57,7 @@ pub trait Exchange {
 
     async fn new_order(&self, order: &NewOrder) -> ExchangeResult<NewOrderAnswer>;
 
-    /// Cancels the open order of this txid
-    async fn cancel_order(&self, txid: &str) -> ExchangeResult<()>;
+    /// Cancels the open order of this txid: false when the exchange cancelled nothing, the order
+    /// having closed meanwhile
+    async fn cancel_order(&self, txid: &str) -> ExchangeResult<bool>;
 }

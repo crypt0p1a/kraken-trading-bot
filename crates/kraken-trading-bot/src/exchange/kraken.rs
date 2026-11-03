@@ -99,10 +99,12 @@ impl Exchange for KrakenExchange {
         self.private.new_order(order).await
     }
 
-    async fn cancel_order(&self, txid: &str) -> ExchangeResult<()> {
+    async fn cancel_order(&self, txid: &str) -> ExchangeResult<bool> {
         let order = OrderReference::Txid {
             txid: txid.to_string(),
         };
-        self.private.cancel_order(&order).await.map(|_| ())
+        // pending: the cancellation is under way, Kraken accepted it
+        let answer = self.private.cancel_order(&order).await?;
+        Ok(answer.count > 0 || answer.pending == Some(true))
     }
 }

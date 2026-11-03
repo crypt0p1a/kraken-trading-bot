@@ -735,12 +735,13 @@ impl<E: Exchange> Bot<E> {
             error: None,
         };
         match self.exchange.cancel_order(&order.txid).await {
-            Ok(()) => {
+            Ok(true) => {
                 tracing::info!(manager = manager.id, txid = %order.txid, %reason, "buy cancelled");
                 self.storage.record_action(&record)?;
                 Ok(Some(Outcome::Cancelled(reason)))
             }
-            // filled or ended meanwhile: the next synchronization tells
+            // closed meanwhile: the next synchronization tells
+            Ok(false) => Ok(None),
             Err(error) => {
                 tracing::warn!(manager = manager.id, txid = %order.txid, %error, "the buy couldn't be cancelled");
                 record.error = Some(error.to_string());

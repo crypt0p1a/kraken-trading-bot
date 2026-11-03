@@ -565,17 +565,21 @@ impl Exchange for SimulatedExchange {
             .collect())
     }
 
-    async fn cancel_order(&self, txid: &str) -> ExchangeResult<()> {
-        let open = self
-            .state()
+    /// Like Kraken: an unknown order is an error, a closed one isn't cancelled
+    async fn cancel_order(&self, txid: &str) -> ExchangeResult<bool> {
+        let mut state = self.state();
+        let now = state.now;
+        let order = state
             .orders
-            .iter()
-            .any(|it| it.txid == txid && it.status == OrderStatus::Open);
-        if !open {
-            return Err(error("EOrder:Unknown order"));
+            .iter_mut()
+            .find(|it| it.txid == txid)
+            .ok_or_else(|| error("EOrder:Unknown order"))?;
+        if order.status != OrderStatus::Open {
+            return Ok(false);
         }
-        self.cancel(txid);
-        Ok(())
+        order.status = OrderStatus::Canceled;
+        order.close_time = Some(now);
+        Ok(true)
     }
 
     async fn new_order(&self, request: &NewOrder) -> ExchangeResult<NewOrderAnswer> {
@@ -696,5 +700,28 @@ mod tests {
         // the price of then, still being built
         assert_eq!((candles[1].open, candles[1].close), (d("90"), d("90")));
         assert!(!candles[1].is_closed);
+    }
+
+    #[tokio::test]
+    async fn cancels_only_the_open_orders() {
+        let exchange = SimulatedExchange::new(1_800_000_000.0);
+        exchange.add_pair("XXBTZUSD", "XBTUSD", "XXBT", "ZUSD", d("100"));
+        let open = exchange.add_foreign_order(Some(1), "XBTUSD", OrderSide::Buy, d("1"), d("90"));
+        let filled = exchange.add_foreign_order(Some(1), "XBTUSD", OrderSide::Buy, d("1"), d("95"));
+        exchange.fill(&filled, None);
+
+        assert!(exchange.cancel_order(&open).await.unwrap());
+        assert!(!exchange.cancel_order(&filled).await.unwrap());
+        assert!(exchange.cancel_order("OUNKNOWN").await.is_err());
+        let status = |txid: &str| {
+            exchange
+                .orders()
+                .into_iter()
+                .find(|it| it.txid == txid)
+                .unwrap()
+                .status
+        };
+        assert_eq!(status(&open), OrderStatus::Canceled);
+        assert_eq!(status(&filled), OrderStatus::Closed);
     }
 }

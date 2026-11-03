@@ -276,10 +276,12 @@ managers:
 async fn cancels_an_order_by_its_txid() {
     use kraken_trading_bot::exchange::Exchange;
     let server = kraken().await;
-    exchange(&server)
-        .cancel_order("OAAAAA-BBBBB-CCCCCC")
-        .await
-        .unwrap();
+    assert!(
+        exchange(&server)
+            .cancel_order("OAAAAA-BBBBB-CCCCCC")
+            .await
+            .unwrap()
+    );
 
     let requests = server.received_requests().await.unwrap();
     let cancel = requests
