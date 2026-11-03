@@ -63,13 +63,11 @@ managers:
 
 ## Virtual managers
 
-With a `virtual_managers` section, the money of the account no manager uses isn't left idle:
+With `virtual_managers: true` (`false` by default), the money of the account no manager uses
+isn't left idle:
 
 ```yaml
-virtual_managers:
-  min_virtual_id: 1000000  # first id of the virtual managers
-  max: 5                   # most virtual managers at the same time (5 by default)
-  fallback_sell_above: 1.5 # see the rebuild below (1.5 by default)
+virtual_managers: true
 ```
 
 - **The margin**, per quote currency: what the account has available, minus what each manager
@@ -78,8 +76,9 @@ virtual_managers:
   a margin.
 - **At each tick**, if the margin pays for the budget of an active manager of the YAML file, the
   bot adds a copy of one of them, picked at random: same pair, budget, `buy_below` and
-  `sell_above`. One at most per tick, up to `max`. It trades from that tick, like any manager.
-- **Their ids** are `min_virtual_id + 1000 × order of creation + id of the copied manager`:
+  `sell_above`. One at most per tick, as long as the margin lasts: the money of the account is the only limit.
+  It trades from that tick, like any manager.
+- **Their ids** are `1000000 + 1000 × order of creation + id of the copied manager`:
   `1003002` is the 4th virtual manager added, a copy of manager 2. The ids of the YAML file must
   then be below 1000, which the check of the configuration enforces. An id is never reused.
 - **Deleted** when the account can't pay for their buy 3 ticks in a row, money withdrawn for
@@ -95,7 +94,7 @@ virtual_managers:
   A virtual manager which holds nothing (no open order, nothing to sell) is rebuilt deleted, its
   id staying taken. One whose copied manager is gone is rebuilt `closing`: it ends its open
   order, sells what it holds, then is deleted. Without its copied manager nor any sell, it sells
-  for what its buy cost + `fallback_sell_above`% (1.5 by default), fees included.
+  for what its buy cost + 1.5%, fees included.
 - They are stored in the `virtual_managers` table of the database, deleted ones included.
 
 ## Indicators of the market
