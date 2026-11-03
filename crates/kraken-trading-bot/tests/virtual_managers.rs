@@ -364,7 +364,12 @@ async fn the_orders_win_over_a_copied_manager_which_changed() {
 
     let manager = rebuilt(&bot);
     assert_eq!(
-        (manager.budget, manager.buy_below, manager.sell_above),
+        // what the first buy spent: its volume was rounded down
+        (
+            manager.budget.round_dp(2),
+            manager.buy_below,
+            manager.sell_above
+        ),
         (d("30"), d("1"), d("1.5"))
     );
     assert_eq!(
@@ -396,7 +401,11 @@ async fn a_virtual_manager_whose_copied_manager_is_gone_closes() {
         kraken_trading_bot::config::ManagerMode::Closing
     );
     assert_eq!(
-        (manager.pair.as_str(), manager.budget, manager.sell_above),
+        (
+            manager.pair.as_str(),
+            manager.budget.round_dp(2),
+            manager.sell_above
+        ),
         ("XBTUSD", d("30"), d("1.5"))
     );
 }

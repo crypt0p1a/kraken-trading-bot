@@ -37,6 +37,11 @@ pub const RETRY_SECONDS: f64 = 3600.0;
 const BUDGET_TOLERANCE: Decimal = Decimal::from_parts(2, 0, 0, false, 2);
 /// A percentage the orders differ from by more than these points is the one of the orders
 const PERCENT_TOLERANCE: Decimal = Decimal::from_parts(1, 0, 0, false, 1);
+/// The decimals of a percentage found in the orders
+const PERCENT_DECIMALS: u32 = 2;
+/// The decimals of a budget found in the orders: an amount of Kraken, whatever the quote (a budget
+/// in XBT has more than 2)
+const BUDGET_DECIMALS: u32 = 8;
 /// The trades read to find the price of the market when a buy was placed, before it
 const PRICE_WINDOW: f64 = 60.0;
 
@@ -69,15 +74,17 @@ pub fn implied_buy_below(buy: &BotOrder, reference: Decimal) -> Option<Decimal> 
     Some((Decimal::ONE - price / reference) * Decimal::ONE_HUNDRED)
 }
 
-/// The value of the copied manager when the orders agree with it, else the one of the orders
+/// The value of the copied manager when the orders agree with it, else the one of the orders,
+/// with the value of the orders rounded to `decimals`
 fn choose(
     template: Option<Decimal>,
     implied: Option<Decimal>,
     agrees: impl Fn(Decimal, Decimal) -> bool,
+    decimals: u32,
 ) -> Option<Decimal> {
     match (template, implied) {
         (Some(template), Some(implied)) if agrees(template, implied) => Some(template),
-        (_, Some(implied)) => Some(implied.round_dp(2).normalize()),
+        (_, Some(implied)) => Some(implied.round_dp(decimals).normalize()),
         (template, None) => template,
     }
 }
@@ -144,6 +151,7 @@ pub async fn rebuild_one<E: Exchange>(
         template.map(|it| it.budget),
         buys.first().and_then(|it| implied_budget(it, fee_rate)),
         close_budget,
+        BUDGET_DECIMALS,
     );
     let Some(budget) = budget else {
         return Ok(None);
@@ -162,6 +170,7 @@ pub async fn rebuild_one<E: Exchange>(
                 template.map(|it| it.sell_above),
                 implied_sell_above(sell, cost, fee_rate),
                 close_percent,
+                PERCENT_DECIMALS,
             )
         }
         // never sold: the copied manager, else the fallback over what the buy cost
@@ -181,6 +190,7 @@ pub async fn rebuild_one<E: Exchange>(
         template.map(|it| it.buy_below),
         implied_buy_below,
         close_percent,
+        PERCENT_DECIMALS,
     )
     .unwrap_or_default()
     .clamp(Decimal::ZERO, Decimal::new(99, 0));
@@ -400,24 +410,42 @@ mod tests {
     }
 
     #[test]
+    fn keeps_the_decimals_of_a_budget_in_a_crypto_quote() {
+        // 0.004 XBT spent by the first buy, its copied manager gone
+        assert_eq!(
+            choose(
+                None,
+                Some(d("0.00400451234")),
+                close_budget,
+                BUDGET_DECIMALS
+            ),
+            Some(d("0.00400451"))
+        );
+        assert_eq!(
+            choose(None, Some(d("1.23456")), close_percent, PERCENT_DECIMALS),
+            Some(d("1.23"))
+        );
+    }
+
+    #[test]
     fn keeps_the_copied_value_the_orders_agree_with() {
         assert_eq!(
-            choose(Some(d("1.5")), Some(d("1.53")), close_percent),
+            choose(Some(d("1.5")), Some(d("1.53")), close_percent, 2),
             Some(d("1.5"))
         );
         assert_eq!(
-            choose(Some(d("3")), Some(d("1.5012")), close_percent),
+            choose(Some(d("3")), Some(d("1.5012")), close_percent, 2),
             Some(d("1.5"))
         );
-        assert_eq!(choose(Some(d("3")), None, close_percent), Some(d("3")));
-        assert_eq!(choose(None, None, close_percent), None);
+        assert_eq!(choose(Some(d("3")), None, close_percent, 2), Some(d("3")));
+        assert_eq!(choose(None, None, close_percent, 2), None);
         assert_eq!(
-            choose(Some(d("30")), Some(d("30.4")), close_budget),
+            choose(Some(d("30")), Some(d("30.4")), close_budget, 8),
             Some(d("30"))
         );
         assert_eq!(
-            choose(Some(d("50")), Some(d("29.999")), close_budget),
-            Some(d("30"))
+            choose(Some(d("50")), Some(d("29.999")), close_budget, 8),
+            Some(d("29.999"))
         );
     }
 }
