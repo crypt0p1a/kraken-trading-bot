@@ -134,7 +134,8 @@ Without Docker: `cargo run --release -p kraken-trading-bot` (or `-- --once` for 
 ## Dashboard
 
 `kraken-dashboard` follows the bot in the terminal (ratatui), live from its
-[database](#database), opened **read only**: it never touches the bot nor Kraken.
+[database](#database), opened **read only**: it never touches Kraken. Its only write is `t`, a
+tick of the bot asked for in the `commands` table.
 
 ```sh
 docker compose exec kraken-trading-bot kraken-dashboard   # in the container of the bot
@@ -143,7 +144,7 @@ cargo run --release -p kraken-dashboard -- kraken-bot.sqlite   # on a copy of th
 
 | Panel | Content |
 |-------|---------|
-| header | LIVE or DRY RUN (from the last order), the time since the last tick (STALE after 30 min), the UTC clock, the prices of the pairs scrolling |
+| header | LIVE or DRY RUN (from the last order), TICK ASKED then TICKING once `t` is pressed, the time since the last tick (STALE after 30 min), the UTC clock, the prices of the pairs scrolling |
 | tiles | portfolio: the whole account, what the managers are worth and the money they don't use (equity of the manager when focused on one), P&L (value - budget), realized by the sells, unrealized, win rate, fees and volume, open orders; the other quote currencies apart |
 | managers | value, P&L, position, entry price and the last price against it, open order, how far the market is from it (`TO FILL`, ▼ the drop a buy waits for, ▲ the rise a sell waits for) and its fill, the trend of the value |
 | chart | `c` switches: the P&L over time, the price of the pair with the entry price and the open orders, the P&L of each sell |
@@ -153,7 +154,8 @@ cargo run --release -p kraken-dashboard -- kraken-bot.sqlite   # on a copy of th
 
 Keys: `tab` the panel the arrows move in, `⏎` focus on the manager of the cursor (tiles, charts,
 orders and tape on it alone), `esc` back to all of them, `1`…`5` the range of the charts (1H, 24H,
-7D, 30D, ALL), `o` the open orders only, `?` the help, `q` quit. The database is checked every 2
+7D, 30D, ALL), `o` the open orders only, `r` read the database again, `t` a tick of the bot now,
+`?` the help, `q` quit. The database is checked every 2
 seconds (`--refresh SECONDS`), read again only when the bot wrote it. The P&L realized replays the
 orders as the ledger of the bot does: each sell against the cost of the base it sold, fees included.
 
@@ -212,6 +214,7 @@ The SQLite database (`/data/kraken-bot.sqlite`) is there to work with what the b
 | `tickers` | the prices of the pairs of the managers, at each tick |
 | `indicators` | the [indicators](#indicators-of-the-market) of the pairs, at each tick |
 | `account_snapshots` | what the whole account is worth at each tick, per quote currency of the managers: the quote, plus the bases of their pairs at the last price |
+| `commands` | what is asked of the bot from outside: `forced_tick`, `refresh` when the dashboard asks for a tick, `pending` while the bot does it, `idle` once done. The bot looks for it every 10 seconds between two ticks |
 | `sync_state` | where the synchronization of the orders is |
 | `virtual_managers` | the [virtual managers](#virtual-managers), deleted ones included |
 

@@ -111,6 +111,8 @@ pub struct App {
     data_version: Option<i64>,
     started: Instant,
     pub quit: bool,
+    /// `t` pressed: a tick of the bot to ask for
+    pub tick_asked: bool,
 }
 
 impl App {
@@ -133,6 +135,18 @@ impl App {
             data_version: None,
             started: Instant::now(),
             quit: false,
+            tick_asked: false,
+        }
+    }
+
+    /// Asks the bot for a tick now, if `t` was pressed
+    pub fn ask_tick(&mut self, database: &Database) {
+        if !std::mem::take(&mut self.tick_asked) {
+            return;
+        }
+        match database.request_tick(now_millis()) {
+            Ok(()) => self.refresh(database, true),
+            Err(error) => self.error = Some(error),
         }
     }
 
@@ -261,6 +275,7 @@ impl App {
                 self.orders_row = 0;
             }
             KeyCode::Char('r') => reload = true,
+            KeyCode::Char('t') => self.tick_asked = true,
             KeyCode::Char(digit @ '1'..='5') => {
                 self.range = Range::ALL[digit as usize - '1' as usize];
                 reload = true;

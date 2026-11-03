@@ -4,7 +4,7 @@
 //! The series of the charts (the values of the managers, the prices) are bucketed by SQLite, so a
 //! range of months costs as much as an hour.
 
-use rusqlite::{Connection, OpenFlags, Row, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, Row, params};
 use rust_decimal::Decimal;
 use std::collections::HashSet;
 use std::path::Path;
@@ -204,6 +204,9 @@ pub struct Data {
     pub accounts: Vec<Account>,
     /// Whether the last order was only validated by Kraken (dry run), None before any order
     pub dry_run: Option<bool>,
+    /// The state of the tick asked for from here: "idle", "refresh" (asked for), "pending" (under
+    /// way). None for the databases older than it
+    pub forced_tick: Option<String>,
     /// Version of the schema of the bot
     pub version: usize,
     /// Start of the range, UTC milliseconds
@@ -212,6 +215,7 @@ pub struct Data {
 
 pub struct Database {
     connection: Connection,
+    path: std::path::PathBuf,
     tables: HashSet<String>,
     version: usize,
 }
@@ -240,10 +244,10 @@ impl Database {
         connection
             .busy_timeout(std::time::Duration::from_secs(2))
             .map_err(sql)?;
-        Self::with(connection)
+        Self::with(connection, path)
     }
 
-    fn with(connection: Connection) -> Result<Self> {
+    fn with(connection: Connection, path: &Path) -> Result<Self> {
         let tables = {
             let mut statement = connection
                 .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
@@ -264,6 +268,7 @@ impl Database {
             .map_err(sql)?;
         Ok(Self {
             connection,
+            path: path.to_path_buf(),
             tables,
             version: version as usize,
         })
@@ -299,6 +304,7 @@ impl Database {
             snapshots: self.snapshots(start, bucket).map_err(sql)?,
             actions: self.actions().map_err(sql)?,
             dry_run: self.dry_run().map_err(sql)?,
+            forced_tick: self.forced_tick().map_err(sql)?,
             markets: self.markets(start, bucket).map_err(sql)?,
             accounts: self.accounts().map_err(sql)?,
             version: self.version,
@@ -306,6 +312,44 @@ impl Database {
         };
         transaction.finish().map_err(sql)?;
         Ok(data)
+    }
+
+    fn forced_tick(&self) -> rusqlite::Result<Option<String>> {
+        if !self.tables.contains("commands") {
+            return Ok(None);
+        }
+        self.connection
+            .query_row(
+                "SELECT state FROM commands WHERE key = 'forced_tick'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    /// Asks the bot for a tick now, rather than at the end of its interval: the only write of the
+    /// dashboard, through a connection of its own. Nothing changes while a tick is under way
+    pub fn request_tick(&self, at: i64) -> Result<()> {
+        if !self.tables.contains("commands") {
+            return Err("this bot can't be asked for a tick: update it".into());
+        }
+        let connection = Connection::open_with_flags(
+            &self.path,
+            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(sql)?;
+        connection
+            .busy_timeout(std::time::Duration::from_secs(2))
+            .map_err(sql)?;
+        connection
+            .execute(
+                "INSERT INTO commands (key, state, updated_at) VALUES ('forced_tick', 'refresh', ?1)
+                 ON CONFLICT (key) DO UPDATE SET state = 'refresh', updated_at = excluded.updated_at
+                 WHERE state <> 'pending'",
+                [at],
+            )
+            .map_err(sql)?;
+        Ok(())
     }
 
     fn accounts(&self) -> rusqlite::Result<Vec<Account>> {

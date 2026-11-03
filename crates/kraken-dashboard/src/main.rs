@@ -110,6 +110,7 @@ fn run(
             app.refresh(database, true);
             checked = Instant::now();
         }
+        app.ask_tick(database);
         if checked.elapsed() >= refresh {
             app.refresh(database, false);
             checked = Instant::now();

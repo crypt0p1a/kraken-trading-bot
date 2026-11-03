@@ -8,7 +8,7 @@ use kraken_trading_bot::config::{ManagerConfig, ManagerMode};
 use kraken_trading_bot::ledger;
 use kraken_trading_bot::order::BotOrder;
 use kraken_trading_bot::storage::{
-    AccountRecord, ActionRecord, ManagerState, Storage, TickerRecord,
+    AccountRecord, ActionRecord, CommandState, FORCED_TICK, ManagerState, Storage, TickerRecord,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -297,6 +297,7 @@ fn draws_the_desk() {
         "80.06 USD",
         "TO FILL",
         "▼0.79%",
+        "RELOAD",
     ] {
         assert!(text.contains(expected), "no {expected} in\n{text}");
     }
@@ -349,6 +350,40 @@ fn sees_when_the_bot_writes() {
         })
         .unwrap();
     assert_ne!(database.data_version().unwrap(), before);
+}
+
+#[test]
+fn asks_the_bot_for_a_tick() {
+    let fixture = path("tick");
+    let storage = write(&fixture.path);
+    let (mut app, database) = app(&fixture.path);
+    assert_eq!(app.model.data.forced_tick.as_deref(), Some("idle"));
+
+    app.on_key(KeyEvent::from(KeyCode::Char('t')));
+    app.ask_tick(&database);
+    assert_eq!(app.error, None);
+    assert_eq!(app.model.data.forced_tick.as_deref(), Some("refresh"));
+    assert!(screen(&app, 180, 48).contains("TICK ASKED"));
+
+    // the bot starts it, then ends it
+    assert!(storage.start_command(FORCED_TICK, now_millis()).unwrap());
+    app.refresh(&database, false);
+    assert!(screen(&app, 180, 48).contains("TICKING"));
+    // asked again while under way: the same tick
+    app.on_key(KeyEvent::from(KeyCode::Char('t')));
+    app.ask_tick(&database);
+    assert_eq!(
+        storage.command(FORCED_TICK).unwrap(),
+        Some(CommandState::Pending)
+    );
+    storage.end_command(FORCED_TICK, now_millis()).unwrap();
+    app.refresh(&database, false);
+    assert_eq!(app.model.data.forced_tick.as_deref(), Some("idle"));
+    let text = screen(&app, 180, 48);
+    assert!(
+        !text.contains("TICK ASKED") && !text.contains("TICKING"),
+        "{text}"
+    );
 }
 
 #[test]

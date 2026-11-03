@@ -145,6 +145,27 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
 
     let last_tick = app.model.data.managers.iter().map(|it| it.updated_at).max();
     let mut right = Vec::new();
+    match app.model.data.forced_tick.as_deref() {
+        Some("refresh") => {
+            right.push(Span::styled(
+                " ⟳ TICK ASKED ",
+                Style::new().fg(Color::Black).bg(GOLD).bold(),
+            ));
+            right.push(Span::raw(" "));
+        }
+        Some("pending") => {
+            right.push(Span::styled(
+                if blink {
+                    " ⟳ TICKING "
+                } else {
+                    " ⟲ TICKING "
+                },
+                Style::new().fg(Color::Black).bg(theme::CYAN).bold(),
+            ));
+            right.push(Span::raw(" "));
+        }
+        _ => {}
+    }
     if let Some(at) = last_tick {
         let late = now - at;
         let color = match late {
@@ -425,6 +446,8 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         key("c", "CHART"),
         key("o", if app.open_only { "ALL ORDERS" } else { "OPEN" }),
         key("i", if app.show_idle { "HIDE IDLE" } else { "IDLE" }),
+        key("r", "RELOAD"),
+        key("t", "TICK"),
         key("?", "HELP"),
         key("1-5", "RANGE"),
     ]
@@ -468,6 +491,10 @@ fn render_help(frame: &mut Frame, area: Rect) {
         ("o", "only the open orders"),
         ("i", "the idle decisions in the tape"),
         ("r", "read the database again"),
+        (
+            "t",
+            "a tick of the bot now, without waiting for its interval",
+        ),
         ("q", "quit"),
     ];
     let mut text: Vec<Line> = vec![Line::from("")];
