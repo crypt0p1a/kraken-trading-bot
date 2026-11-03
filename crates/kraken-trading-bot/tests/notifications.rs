@@ -318,3 +318,22 @@ virtual_managers: {min_virtual_id: 1000000}",
     assert!(summary.contains("#1 XBTUSD"), "{summary}");
     assert!(summary.contains("#1000001 XBTUSD"), "{summary}");
 }
+
+#[tokio::test]
+async fn a_buy_placed_again_by_the_trailing_isnt_notified_as_ended() {
+    let (mut bot, recorded) = bot(exchange("1000"), false, "buy_trailing: 0.5", ONE).await;
+    bot.tick().await.unwrap();
+    titles(&recorded);
+
+    // cancelled by the bot, then placed again: only the new buy is notified
+    bot.exchange().set_price(BTC, d("60000"));
+    bot.tick().await.unwrap();
+    assert!(titles(&recorded).is_empty());
+    bot.tick().await.unwrap();
+    assert_eq!(titles(&recorded), ["Buy placed · #1 XBTUSD"]);
+
+    // an expiry is still notified
+    bot.exchange().advance(12.0 * 3600.0 + 1.0);
+    bot.tick().await.unwrap();
+    assert_eq!(titles(&recorded)[0], "Buy expired · #1 XBTUSD");
+}

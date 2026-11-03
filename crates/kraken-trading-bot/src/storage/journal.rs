@@ -57,6 +57,16 @@ impl Storage {
     }
 
     /// The last actions of a manager, most recent first
+    /// The bot cancelled the order itself: a buy the price left behind
+    pub fn cancelled_by_the_bot(&self, txid: &str) -> Result<bool> {
+        Ok(self.connection.query_row(
+            "SELECT EXISTS (SELECT 1 FROM actions
+                WHERE txid = ?1 AND kind = 'buy_cancelled' AND error IS NULL)",
+            [txid],
+            |row| row.get(0),
+        )?)
+    }
+
     pub fn actions_of(&self, manager_id: i32, limit: usize) -> Result<Vec<ActionRecord>> {
         let mut statement = self.connection.prepare_cached(
             "SELECT manager_id, at, kind, amount, price, reason, dry_run, txid, error FROM actions

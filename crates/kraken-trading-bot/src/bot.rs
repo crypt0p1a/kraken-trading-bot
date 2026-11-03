@@ -178,6 +178,12 @@ impl<E: Exchange> Bot<E> {
     ) -> BotResult<()> {
         for event in events {
             let order = &event.order;
+            // the bot placed it again from the new price: the new buy is notified
+            if event.change == OrderChange::Ended
+                && self.storage.cancelled_by_the_bot(&order.txid)?
+            {
+                continue;
+            }
             let Some(manager) = managers.iter().find(|it| it.id == order.manager_id) else {
                 continue;
             };
