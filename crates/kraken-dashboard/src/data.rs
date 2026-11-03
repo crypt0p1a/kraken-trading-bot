@@ -100,6 +100,16 @@ impl Manager {
         self.value - self.budget
     }
 
+    /// What the manager would be worth once its open buy filled and all it holds sold, as the
+    /// strategy sells: for what the position cost + `sell_above`%, fees included
+    pub fn target(&self) -> Decimal {
+        let cost = self.position_cost + self.quote_in_buy_order;
+        if cost.is_zero() {
+            return self.value;
+        }
+        self.quote_available + cost * (Decimal::ONE + self.sell_above / Decimal::ONE_HUNDRED)
+    }
+
     pub fn pnl_percent(&self) -> f64 {
         percent(self.pnl(), self.budget)
     }

@@ -137,6 +137,8 @@ pub struct Totals {
     pub managers: usize,
     pub budget: Decimal,
     pub value: Decimal,
+    /// The value once every open buy filled and every position sold at its target
+    pub target: Decimal,
     pub realized: Decimal,
     pub fees: Decimal,
     pub volume: Decimal,
@@ -246,6 +248,7 @@ impl Model {
             total.managers += 1;
             total.budget += manager.budget;
             total.value += manager.value;
+            total.target += manager.target();
             total.exposure += manager.base() * manager.last_price;
             total.open_orders += self.open_orders_of(manager.id).count();
             if let Some(performance) = self.performances.get(&manager.id) {

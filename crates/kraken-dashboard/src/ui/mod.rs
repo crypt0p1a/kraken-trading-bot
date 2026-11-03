@@ -4,7 +4,7 @@
 //! ```text
 //! ◆ KRAKEN  TRADING DESK  ● LIVE                      TICK 42s AGO │ UTC 2026-11-03 14:32:07
 //!  XBTUSD 76,567.1 ▲ +1.23%  ◆  ETHUSD 2,233.67 ▼ -0.45%  ◆  …
-//! ┌EQUITY──┐┌P&L─────┐┌REALIZED┐┌UNREAL.─┐┌WIN RATE┐┌FEES────┐┌ORDERS──┐
+//! ┌PORTF.──┐┌TARGET──┐┌P&L─────┐┌REALIZED┐┌UNREAL.─┐┌WIN RATE┐┌FEES────┐┌ORDERS──┐
 //! ┌MANAGERS──────────────────────────────┐┌P&L · USD · 24H──────────────┐
 //! ┌ORDERS────────────────────────────────┐┌MARKETS──────────────────────┐
 //!                                         ┌TAPE─────────────────────────┐
@@ -15,7 +15,7 @@ mod charts;
 mod panels;
 
 use crate::app::{App, Range, now_millis};
-use crate::data::to_f64;
+use crate::data::{percent, to_f64};
 use crate::format;
 use crate::stats::Totals;
 use crate::theme::{self, AMBER, BACKGROUND, DIM, DOWN, GOLD, TEXT, UP};
@@ -275,7 +275,7 @@ fn render_tiles(frame: &mut Frame, app: &App, area: Rect) {
     let pnl = to_f64(totals.pnl());
     let realized = to_f64(totals.realized);
     let unrealized = to_f64(totals.unrealized());
-    let areas: [Rect; 7] = Layout::horizontal([Constraint::Fill(1); 7]).areas(area);
+    let areas: [Rect; 8] = Layout::horizontal([Constraint::Fill(1); 8]).areas(area);
 
     // the whole account, managers or not, when the bot records it
     let account = app
@@ -333,9 +333,30 @@ fn render_tiles(frame: &mut Frame, app: &App, area: Rect) {
         ),
         Line::from(detail),
     );
+    // every open buy filled, every position sold at its target: what the account would be worth
+    let current = account.map_or(totals.value, |it| it.value());
+    let target = current - totals.value + totals.target;
+    let gain = to_f64(target - current);
     tile(
         frame,
         areas[1],
+        "TARGET",
+        Span::styled(
+            format!("{} {quote}", format::money(to_f64(target))),
+            theme::bold(theme::trend(gain)),
+        ),
+        Line::from(Span::styled(
+            format!(
+                "{} · {}",
+                format::signed(gain),
+                format::percent(percent(target - current, current))
+            ),
+            Style::new().fg(theme::trend(gain)),
+        )),
+    );
+    tile(
+        frame,
+        areas[2],
         "P&L",
         Span::styled(format::signed(pnl), theme::bold(theme::trend(pnl))),
         Line::from(Span::styled(
@@ -349,7 +370,7 @@ fn render_tiles(frame: &mut Frame, app: &App, area: Rect) {
     );
     tile(
         frame,
-        areas[2],
+        areas[3],
         "REALIZED",
         Span::styled(
             format::signed(realized),
@@ -362,7 +383,7 @@ fn render_tiles(frame: &mut Frame, app: &App, area: Rect) {
     );
     tile(
         frame,
-        areas[3],
+        areas[4],
         "UNREALIZED",
         Span::styled(
             format::signed(unrealized),
@@ -376,7 +397,7 @@ fn render_tiles(frame: &mut Frame, app: &App, area: Rect) {
     let losses = totals.trades - totals.wins;
     tile(
         frame,
-        areas[4],
+        areas[5],
         "WIN RATE",
         match totals.win_rate() {
             Some(rate) => Span::styled(
@@ -393,7 +414,7 @@ fn render_tiles(frame: &mut Frame, app: &App, area: Rect) {
     );
     tile(
         frame,
-        areas[5],
+        areas[6],
         "FEES",
         Span::styled(format::money(to_f64(totals.fees)), theme::bold(GOLD)),
         Line::from(Span::styled(
@@ -403,7 +424,7 @@ fn render_tiles(frame: &mut Frame, app: &App, area: Rect) {
     );
     tile(
         frame,
-        areas[6],
+        areas[7],
         "OPEN ORDERS",
         Span::styled(totals.open_orders.to_string(), theme::bold(theme::CYAN)),
         Line::from(Span::styled(

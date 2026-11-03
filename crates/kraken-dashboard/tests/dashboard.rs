@@ -267,6 +267,21 @@ fn reads_what_the_bot_wrote() {
     let filled = model.data.orders.iter().find(|it| it.txid == "O1").unwrap();
     assert_eq!(model.to_fill(filled), None);
 
+    // sold at its target: the position of manager 2 + 1.5%, fees included
+    let second = model.manager(2).unwrap();
+    assert_eq!(second.position_cost, d("22.2888"));
+    assert_eq!(
+        second.target(),
+        second.quote_available + d("22.2888") * d("1.015")
+    );
+    // manager 1: its open buy filled and sold, what it holds sold
+    let first = model.manager(1).unwrap();
+    assert_eq!(
+        first.target(),
+        first.quote_available + (first.position_cost + first.quote_in_buy_order) * d("1.015")
+    );
+    assert_eq!(totals.target, first.target() + second.target());
+
     // the idle decisions are hidden by default
     assert_eq!(app.actions().len(), 2);
     assert_eq!(app.model.pnl_series(&[1, 2]).len(), 2);
@@ -295,6 +310,7 @@ fn draws_the_desk() {
         "100.0%",
         "PORTFOLIO",
         "80.06 USD",
+        "TARGET",
         "TO FILL",
         "▼0.79%",
         "RELOAD",

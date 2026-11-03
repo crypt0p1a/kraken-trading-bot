@@ -145,7 +145,7 @@ cargo run --release -p kraken-dashboard -- kraken-bot.sqlite   # on a copy of th
 | Panel | Content |
 |-------|---------|
 | header | LIVE or DRY RUN (from the last order), TICK ASKED then TICKING once `t` is pressed, the time since the last tick (STALE after 30 min), the UTC clock, the prices of the pairs scrolling |
-| tiles | portfolio: the whole account, what the managers are worth and the money they don't use (equity of the manager when focused on one), P&L (value - budget), realized by the sells, unrealized, win rate, fees and volume, open orders; the other quote currencies apart |
+| tiles | portfolio: the whole account, what the managers are worth and the money they don't use (equity of the manager when focused on one), target: what the account would be worth once every open buy filled and every position sold for what it cost + `sell_above`%, fees included, P&L (value - budget), realized by the sells, unrealized, win rate, fees and volume, open orders; the other quote currencies apart |
 | managers | value, P&L, position, entry price and the last price against it, open order, how far the market is from it (`TO FILL`, ▼ the drop a buy waits for, ▲ the rise a sell waits for) and its fill, the trend of the value |
 | chart | `c` switches: the P&L over time, the price of the pair with the entry price and the open orders, the P&L of each sell |
 | orders | the blotter: side, price, how far the market is from an open order, volume, fill, cost, fee, status |
