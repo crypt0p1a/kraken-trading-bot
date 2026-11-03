@@ -179,10 +179,10 @@ pub async fn rebuild_one<E: Exchange>(
         budget,
         buy_below,
         sell_above,
-        mode: if template.is_some() {
-            ManagerMode::Active
-        } else {
-            ManagerMode::Closing
+        // closing with the manager it copies, or without it
+        mode: match template {
+            Some(template) if template.mode == ManagerMode::Active => ManagerMode::Active,
+            _ => ManagerMode::Closing,
         },
     }))
 }

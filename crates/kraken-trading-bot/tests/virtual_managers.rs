@@ -516,3 +516,74 @@ async fn without_a_sell_nor_its_copied_manager_it_sells_at_the_fallback() {
     assert!(brought >= cost * d("1.015"), "{brought} for {cost}");
     assert!(brought < cost * d("1.016"), "{brought} for {cost}");
 }
+
+/// The same Kraken and database, another configuration
+async fn reconfigure(bot: Bot<SimulatedExchange>, managers: &str) -> Bot<SimulatedExchange> {
+    let (exchange, storage) = bot.into_parts();
+    let mut bot = Bot::new(
+        exchange,
+        storage,
+        config("virtual_managers: true", managers),
+    )
+    .with_seed(7);
+    bot.prepare().await.unwrap();
+    bot
+}
+
+#[tokio::test]
+async fn a_virtual_manager_closes_with_the_manager_it_copies() {
+    let bot = with_a_virtual_manager().await;
+    let mut bot = reconfigure(
+        bot,
+        "\n  - {id: 1, pair: XBTUSD, budget: 30, buy_below: 1, sell_above: 1.5, mode: closing}",
+    )
+    .await;
+    // its buy expires: closing, it doesn't buy again and is deleted
+    bot.exchange().advance(13.0 * 3600.0);
+    let outcome = outcome(&mut bot, VIRTUAL).await;
+    assert!(matches!(outcome, Outcome::Deleted(_)), "{outcome:?}");
+    // the manager of the file stays, closing
+    assert!(matches!(outcome_of_one(&mut bot).await, Outcome::Idle(_)));
+    assert!(virtuals(&bot).is_empty());
+}
+
+async fn outcome_of_one(bot: &mut Bot<SimulatedExchange>) -> Outcome {
+    bot.tick().await.unwrap().outcomes.remove(&1).unwrap()
+}
+
+#[tokio::test]
+async fn a_virtual_manager_closes_without_the_manager_it_copies() {
+    let bot = selling_virtual_manager().await;
+    let mut bot = reconfigure(
+        bot,
+        "\n  - {id: 2, pair: ETHUSD, budget: 20, buy_below: 2, sell_above: 3}",
+    )
+    .await;
+    let manager = bot
+        .managers()
+        .unwrap()
+        .into_iter()
+        .find(|it| it.id == VIRTUAL)
+        .unwrap();
+    assert_eq!(
+        manager.mode,
+        kraken_trading_bot::config::ManagerMode::Closing
+    );
+    // it still sells what it holds
+    assert_eq!(outcome(&mut bot, VIRTUAL).await, Outcome::Waited);
+}
+
+#[tokio::test]
+async fn a_copy_of_a_closing_manager_is_rebuilt_closing() {
+    let bot = selling_virtual_manager().await;
+    let mut bot = restart(
+        bot,
+        "\n  - {id: 1, pair: XBTUSD, budget: 30, buy_below: 1, sell_above: 1.5, mode: closing}",
+    )
+    .await;
+    bot.tick().await.unwrap();
+    assert_eq!(
+        rebuilt(&bot).mode,
+        kraken_trading_bot::config::ManagerMode::Closing
+    );
+}

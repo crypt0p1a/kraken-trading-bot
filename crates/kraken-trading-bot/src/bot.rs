@@ -100,16 +100,23 @@ impl<E: Exchange> Bot<E> {
         self
     }
 
-    /// The managers of the YAML file, then the virtual managers
+    /// The managers of the YAML file, then the virtual managers. A virtual manager closes with the
+    /// manager it copies, closing or gone from the file: it sells what it holds, then is deleted
     pub fn managers(&self) -> BotResult<Vec<ManagerConfig>> {
         let mut managers = self.config.managers.clone();
         if self.config.virtual_managers {
-            managers.extend(
-                self.storage
-                    .virtual_managers()?
-                    .into_iter()
-                    .map(|it| it.config),
-            );
+            for virtual_manager in self.storage.virtual_managers()? {
+                let mut config = virtual_manager.config;
+                let template = self
+                    .config
+                    .managers
+                    .iter()
+                    .find(|it| it.id == virtual_manager.template_id);
+                if template.is_none_or(|it| it.mode == ManagerMode::Closing) {
+                    config.mode = ManagerMode::Closing;
+                }
+                managers.push(config);
+            }
         }
         Ok(managers)
     }
@@ -263,6 +270,11 @@ impl<E: Exchange> Bot<E> {
 
     pub fn into_exchange(self) -> E {
         self.exchange
+    }
+
+    /// The exchange and the database: to start another bot on them
+    pub fn into_parts(self) -> (E, Storage) {
+        (self.exchange, self.storage)
     }
 
     pub fn storage(&self) -> &Storage {
