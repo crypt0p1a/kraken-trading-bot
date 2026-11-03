@@ -15,20 +15,27 @@ fn d(value: &str) -> Decimal {
     Decimal::from_str(value).unwrap()
 }
 
+fn config(dry_run: bool, settings: &str) -> BotConfig {
+    BotConfig::parse(&format!(
+        "dry_run: {dry_run}
+{settings}
+managers:
+  - {{id: 1, pair: XBTUSD, budget: 100, buy_below: 1, sell_above: 1.5}}"
+    ))
+    .unwrap()
+}
+
 /// Manager 1 buys at -1% of 50000: 49500
 async fn bot(settings: &str) -> Bot<SimulatedExchange> {
     let exchange = SimulatedExchange::new(1_800_000_000.0);
     exchange.add_pair(BTC, "XBTUSD", "XXBT", "ZUSD", d("50000"));
     exchange.set_fee_percent(d("0.25"));
     exchange.deposit("ZUSD", d("1000"));
-    let config = BotConfig::parse(&format!(
-        "dry_run: false
-{settings}
-managers:
-  - {{id: 1, pair: XBTUSD, budget: 100, buy_below: 1, sell_above: 1.5}}"
-    ))
-    .unwrap();
-    let mut bot = Bot::new(exchange, Storage::open_in_memory().unwrap(), config);
+    let mut bot = Bot::new(
+        exchange,
+        Storage::open_in_memory().unwrap(),
+        config(false, settings),
+    );
     bot.prepare().await.unwrap();
     bot
 }
@@ -119,4 +126,27 @@ async fn never_touches_a_sell() {
     bot.exchange().set_price(BTC, d("50200"));
     assert_eq!(tick(&mut bot).await, Outcome::Waited);
     assert_eq!(open_orders(&bot), 1);
+}
+
+#[tokio::test]
+async fn a_dry_run_never_cancels_a_buy() {
+    // a real buy placed by a live run, then the same database in a dry run
+    let mut live = bot("buy_trailing: 0.5").await;
+    tick(&mut live).await;
+    let storage = Storage::open_in_memory().unwrap();
+    storage
+        .upsert_orders(&live.storage().orders_of(1).unwrap())
+        .unwrap();
+    let mut dry = Bot::new(
+        live.into_exchange(),
+        storage,
+        config(true, "buy_trailing: 0.5"),
+    );
+    dry.prepare().await.unwrap();
+
+    dry.exchange().set_price(BTC, d("60000"));
+    for _ in 0..3 {
+        assert_eq!(tick(&mut dry).await, Outcome::Waited);
+    }
+    assert_eq!(open_orders(&dry), 1);
 }

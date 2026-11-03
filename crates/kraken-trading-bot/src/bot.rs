@@ -701,6 +701,10 @@ impl<E: Exchange> Bot<E> {
         let Some(trailing) = self.config.buy_trailing else {
             return Ok(None);
         };
+        // a dry run never changes the orders on Kraken: an open buy left by a live run stays
+        if self.config.dry_run {
+            return Ok(None);
+        }
         let Some((order, limit)) = open
             .iter()
             .filter(|it| it.side == OrderSide::Buy && it.volume_executed.is_zero())
