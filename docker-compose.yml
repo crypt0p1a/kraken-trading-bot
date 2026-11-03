@@ -3,6 +3,7 @@
 #
 #   docker compose up -d --build
 #   docker compose logs -f
+#   docker compose exec kraken-trading-bot kraken-dashboard   # the dashboard, in the terminal
 #
 # The bot is a dry run until managers.yaml says dry_run: false.
 

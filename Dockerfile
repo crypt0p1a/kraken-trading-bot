@@ -2,7 +2,7 @@
 #
 #   docker compose up -d --build
 #
-# The image only holds the binary: the managers are in /config/managers.yaml (mounted), the
+# The image only holds the binaries, the bot and its dashboard: the managers are in /config/managers.yaml (mounted), the
 # SQLite database in /data (volume), the credentials in the environment.
 
 # ---- build ----
@@ -11,14 +11,17 @@ WORKDIR /build
 COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/build/target \
-    cargo build --release --locked -p kraken-trading-bot \
+    cargo build --release --locked -p kraken-trading-bot -p kraken-dashboard \
     && cp target/release/kraken-trading-bot /kraken-trading-bot \
+    && cp target/release/kraken-dashboard /kraken-dashboard \
     && mkdir -p /out/data /out/config
 
 # ---- run ----
 # no shell, no package manager, non-root user (65532); rustls embeds its root certificates
 FROM gcr.io/distroless/cc-debian12:nonroot
 COPY --from=builder /kraken-trading-bot /usr/local/bin/kraken-trading-bot
+# the dashboard, on the same database: docker compose exec kraken-trading-bot kraken-dashboard
+COPY --from=builder /kraken-dashboard /usr/local/bin/kraken-dashboard
 # owned by the user of the image: a named volume mounted on /data inherits it
 COPY --from=builder --chown=65532:65532 /out/data /data
 COPY --from=builder --chown=65532:65532 /out/config /config
