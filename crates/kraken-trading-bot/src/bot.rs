@@ -11,13 +11,16 @@ use crate::notify::{self, OrderChange, OrderEvent};
 use crate::order::BotOrder;
 use crate::pair::PairRules;
 use crate::rebuild;
-use crate::storage::{ActionRecord, ManagerState, Storage, TickerRecord, VirtualManager};
+use crate::storage::{
+    AccountRecord, ActionRecord, ManagerState, Storage, TickerRecord, VirtualManager,
+};
 use crate::strategy::{self, Action, Decision};
 use crate::sync::{self, SyncReport};
 use crate::{BotError, BotResult};
+use kraken_api::account::ExtendedBalance;
 use kraken_api::trading::{NewOrder, OrderFlag, OrderSide, OrderStatus, OrderType, TimeInForce};
 use rust_decimal::Decimal;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Mutex;
 use trading_notify::messages::{self, Label, ManagerSummary};
 use trading_notify::{Catalog, Notification, Notifier};
@@ -414,11 +417,10 @@ impl<E: Exchange> Bot<E> {
             tracing::error!(%error, "the changes of the orders couldn't be notified");
         }
 
+        let balances = self.exchange.balances().await?;
+        self.record_account(&balances, &markets);
         // what the account has, decreased locally when orders are placed
-        let mut available: HashMap<String, Decimal> = self
-            .exchange
-            .balances()
-            .await?
+        let mut available: HashMap<String, Decimal> = balances
             .into_iter()
             .map(|(asset, balance)| (asset, balance.available()))
             .collect();
@@ -453,6 +455,41 @@ impl<E: Exchange> Bot<E> {
             tracing::error!(%error, "the daily summary couldn't be sent");
         }
         Ok(TickReport { sync, outcomes })
+    }
+
+    /// What the whole account is worth in each quote currency of the managers: the quote, plus the
+    /// bases of its pairs at their last price. An asset no pair of the managers trades isn't counted
+    fn record_account(
+        &self,
+        balances: &HashMap<String, ExtendedBalance>,
+        markets: &HashMap<String, Market>,
+    ) {
+        let at = now_millis();
+        let total = |asset: &str| balances.get(asset).map_or(Decimal::ZERO, |it| it.balance);
+        let mut keys: Vec<&String> = markets.keys().collect();
+        keys.sort();
+        let mut accounts: BTreeMap<&str, AccountRecord> = BTreeMap::new();
+        let mut valued = HashSet::new();
+        for key in keys {
+            let rules = &markets[key].rules;
+            let account = accounts
+                .entry(&rules.quote_asset)
+                .or_insert_with(|| AccountRecord {
+                    at,
+                    quote: rules.quote_asset.clone(),
+                    cash: total(&rules.quote_asset),
+                    holdings: Decimal::ZERO,
+                });
+            // a base traded in two quotes is counted once
+            if valued.insert(&rules.base_asset) {
+                account.holdings += total(&rules.base_asset) * markets[key].reference;
+            }
+        }
+        for account in accounts.values() {
+            if let Err(error) = self.storage.record_account(account) {
+                tracing::warn!(quote = %account.quote, %error, "the account couldn't be recorded");
+            }
+        }
     }
 
     /// Once per database: the virtual managers found in the orders of Kraken it doesn't know,

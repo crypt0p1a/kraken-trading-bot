@@ -36,6 +36,19 @@ pub struct TickerRecord {
     pub vwap_24h: Decimal,
 }
 
+/// What the whole account is worth in a quote currency at a tick, managers or not
+#[derive(Debug, Clone, PartialEq)]
+pub struct AccountRecord {
+    /// UTC milliseconds
+    pub at: i64,
+    /// Kraken name of the asset, e.g. "ZEUR"
+    pub quote: String,
+    /// The quote in the account, held by orders or not
+    pub cash: Decimal,
+    /// The bases of the pairs of this quote in the account, at their last price
+    pub holdings: Decimal,
+}
+
 impl Storage {
     pub fn record_action(&self, action: &ActionRecord) -> Result<()> {
         self.connection.execute(
@@ -119,6 +132,47 @@ impl Storage {
             ],
         )?;
         Ok(())
+    }
+
+    pub fn record_account(&self, account: &AccountRecord) -> Result<()> {
+        self.connection.execute(
+            "INSERT OR REPLACE INTO account_snapshots (at, quote, cash, holdings)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                account.at,
+                account.quote,
+                account.cash.to_string(),
+                account.holdings.to_string(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// The last snapshot of the account in each quote currency
+    pub fn last_accounts(&self) -> Result<Vec<AccountRecord>> {
+        let mut statement = self.connection.prepare_cached(
+            "SELECT at, quote, cash, holdings FROM account_snapshots
+             WHERE at = (SELECT MAX(at) FROM account_snapshots) ORDER BY quote",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?;
+        let mut accounts = Vec::new();
+        for row in rows {
+            let (at, quote, cash, holdings) = row?;
+            accounts.push(AccountRecord {
+                at,
+                quote,
+                cash: super::decimal(cash)?,
+                holdings: super::decimal(holdings)?,
+            });
+        }
+        Ok(accounts)
     }
 
     /// The indicators of the pair at a tick (UTC milliseconds)

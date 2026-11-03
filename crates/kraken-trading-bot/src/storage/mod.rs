@@ -11,6 +11,7 @@
 //! | `virtual_managers` | the managers added by the bot, deleted ones included |
 //! | `order_references` | the price of the market each buy was placed from |
 //! | `indicators` | the trend and the volatility of the pairs over 24 hours, at each tick |
+//! | `account_snapshots` | what the whole account is worth at each tick, per quote currency |
 //!
 //! The amounts are stored as text, to stay exact. The timestamps are UTC milliseconds, except the
 //! times of the orders which are the seconds of Kraken.
@@ -20,7 +21,7 @@ mod managers;
 mod orders;
 mod virtuals;
 
-pub use journal::{ActionRecord, TickerRecord};
+pub use journal::{AccountRecord, ActionRecord, TickerRecord};
 pub use managers::ManagerState;
 pub use virtuals::VirtualManager;
 
@@ -162,6 +163,16 @@ CREATE TABLE indicators (
 CREATE TABLE order_references (
     txid      TEXT PRIMARY KEY,
     reference TEXT NOT NULL
+);
+"#,
+    // the whole account, managers or not, per quote currency of the managers
+    r#"
+CREATE TABLE account_snapshots (
+    at       INTEGER NOT NULL,
+    quote    TEXT NOT NULL,
+    cash     TEXT NOT NULL,
+    holdings TEXT NOT NULL,
+    PRIMARY KEY (at, quote)
 );
 "#,
 ];
