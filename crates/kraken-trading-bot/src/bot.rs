@@ -746,11 +746,23 @@ impl<E: Exchange> Bot<E> {
             }
             // closed meanwhile: the next synchronization tells
             Ok(false) => Ok(None),
+            // gone from the open orders meanwhile: the next synchronization tells
+            Err(error) if is_unknown_order(&error) => Ok(None),
+            // a permission, a rate limit, the network: a failure of the manager, notified once,
+            // recorded when it changes
             Err(error) => {
                 tracing::warn!(manager = manager.id, txid = %order.txid, %error, "the buy couldn't be cancelled");
                 record.error = Some(error.to_string());
-                self.storage.record_action(&record)?;
-                Ok(None)
+                let last = self.storage.actions_of(manager.id, 1)?;
+                let repeated = last
+                    .first()
+                    .is_some_and(|it| it.kind == record.kind && it.error == record.error);
+                if !repeated {
+                    self.storage.record_action(&record)?;
+                }
+                Ok(Some(Outcome::Failed(format!(
+                    "the buy couldn't be cancelled: {error}"
+                ))))
             }
         }
     }
@@ -913,6 +925,11 @@ impl<E: Exchange> Bot<E> {
             }
         }
     }
+}
+
+/// Kraken doesn't know the order as an open one
+fn is_unknown_order(error: &kraken_api::KrakenError) -> bool {
+    matches!(error, kraken_api::KrakenError::Api { body, .. } if body.contains("EOrder:Unknown order"))
 }
 
 /// The bot only trades with limit orders, at the price it computed, with the fees in the quote:

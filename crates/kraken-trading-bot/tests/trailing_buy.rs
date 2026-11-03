@@ -150,3 +150,57 @@ async fn a_dry_run_never_cancels_a_buy() {
     }
     assert_eq!(open_orders(&dry), 1);
 }
+
+#[tokio::test]
+async fn a_cancellation_refused_is_a_failure_recorded_once() {
+    let mut bot = bot("buy_trailing: 0.5").await;
+    tick(&mut bot).await;
+    bot.exchange()
+        .fail_cancels(Some("EGeneral:Permission denied"));
+    bot.exchange().set_price(BTC, d("60000"));
+
+    for _ in 0..3 {
+        let outcome = tick(&mut bot).await;
+        assert!(
+            matches!(&outcome, Outcome::Failed(error) if error.contains("Permission denied")),
+            "{outcome:?}"
+        );
+    }
+    let cancellations: Vec<_> = bot
+        .storage()
+        .actions_of(1, 10)
+        .unwrap()
+        .into_iter()
+        .filter(|it| it.kind == "buy_cancelled")
+        .collect();
+    assert_eq!(cancellations.len(), 1);
+    assert!(
+        cancellations[0]
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("Permission denied")
+    );
+    assert_eq!(open_orders(&bot), 1);
+
+    // allowed again: cancelled, then placed again
+    bot.exchange().fail_cancels(None);
+    assert!(matches!(tick(&mut bot).await, Outcome::Cancelled(_)));
+    assert_eq!(buy_price(&tick(&mut bot).await), d("59400"));
+}
+
+#[tokio::test]
+async fn a_buy_gone_meanwhile_is_waited_for() {
+    let mut bot = bot("buy_trailing: 0.5").await;
+    tick(&mut bot).await;
+    bot.exchange().fail_cancels(Some("EOrder:Unknown order"));
+    bot.exchange().set_price(BTC, d("60000"));
+    assert_eq!(tick(&mut bot).await, Outcome::Waited);
+    assert!(
+        bot.storage()
+            .actions_of(1, 10)
+            .unwrap()
+            .iter()
+            .all(|it| it.kind != "buy_cancelled")
+    );
+}

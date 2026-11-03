@@ -35,6 +35,8 @@ struct State {
     next_txid: u64,
     /// Calls of AddOrder, validated ones included
     add_order_calls: usize,
+    /// The error every cancellation answers, when set
+    cancel_error: Option<String>,
 }
 
 fn error(body: &str) -> KrakenError {
@@ -57,6 +59,7 @@ impl SimulatedExchange {
                 now,
                 next_txid: 1,
                 add_order_calls: 0,
+                cancel_error: None,
             }),
         }
     }
@@ -229,6 +232,11 @@ impl SimulatedExchange {
 
     pub fn orders(&self) -> Vec<Order> {
         self.state().orders.clone()
+    }
+
+    /// Every cancellation fails with this error of Kraken, none when None
+    pub fn fail_cancels(&self, error: Option<&str>) {
+        self.state().cancel_error = error.map(str::to_string);
     }
 
     pub fn add_order_calls(&self) -> usize {
@@ -568,6 +576,9 @@ impl Exchange for SimulatedExchange {
     /// Like Kraken: an unknown order is an error, a closed one isn't cancelled
     async fn cancel_order(&self, txid: &str) -> ExchangeResult<bool> {
         let mut state = self.state();
+        if let Some(body) = &state.cancel_error {
+            return Err(error(body));
+        }
         let now = state.now;
         let order = state
             .orders
