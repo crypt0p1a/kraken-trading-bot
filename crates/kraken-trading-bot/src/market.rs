@@ -35,9 +35,11 @@ pub struct Indicators {
     /// Slope of the linear regression of the closes over 24 hours, in % of the close per 24 hours:
     /// the trend, positive when the price rises
     pub slope_24h_percent: f64,
-    /// Highest high minus lowest low over 24 hours, in % of the close
+    /// Highest high minus lowest low of the candles, in % of the close: over 24 hours once 96
+    /// candles exist, over the candles available before (12 hours at least)
     pub range_24h_percent: f64,
-    /// The close against the open of 24 hours before, in %
+    /// The close against the open of the first candle, in %: over 24 hours once 96 candles
+    /// exist, over the candles available before
     pub change_24h_percent: f64,
     /// Candles they're computed from, at most 96
     pub candles: usize,
@@ -102,7 +104,8 @@ pub fn compute(candles: &[Candle]) -> Option<Indicators> {
         atr_percent: range / close * 100.0,
         ema_fast: fast,
         ema_slow: slow,
-        slope_24h_percent: regression.tan() * day.len() as f64 / close * 100.0,
+        // per 24 hours, whatever the candles available
+        slope_24h_percent: regression.tan() * DAY as f64 / close * 100.0,
         range_24h_percent: (high - low) / close * 100.0,
         change_24h_percent: (close / f(first.open) - 1.0) * 100.0,
         candles: day.len(),
@@ -179,6 +182,18 @@ mod tests {
         assert!(indicators.atr_percent > 1.0 / 110.0 * 100.0);
         assert!(indicators.atr_percent < expected / 110.0 * 100.0 * 1.01);
         assert!((indicators.range_24h_percent - 11.0 / 110.0 * 100.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_slope_is_per_24_hours_whatever_the_candles_available() {
+        // 12 hours of a market rising 0.1 per candle: 9.6 per 24 hours
+        let indicators = compute(&line(0.1)[..48]).unwrap();
+        assert_eq!(indicators.candles, 48);
+        let expected = 0.1 * 96.0 / indicators.close * 100.0;
+        assert!(
+            (indicators.slope_24h_percent - expected).abs() < 1e-6,
+            "{indicators:?}"
+        );
     }
 
     #[test]
