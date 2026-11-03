@@ -124,12 +124,46 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
-The image holds only the binary (distroless, non-root, ~70 MB): `managers.yaml` is mounted
+The image holds only the binaries of the bot and of its [dashboard](#dashboard) (distroless, non-root): `managers.yaml` is mounted
 read-only in `/config`, the database lives in the `kraken-bot-data` volume (`/data`). `docker
 compose stop` lets the tick in progress end.
 
 Without Docker: `cargo run --release -p kraken-trading-bot` (or `-- --once` for a single tick,
 `-- --check` to only check the configuration and the pairs).
+
+## Dashboard
+
+`kraken-dashboard` follows the bot in the terminal (ratatui), live from its
+[database](#database), opened **read only**: it never touches the bot nor Kraken.
+
+```sh
+docker compose exec kraken-trading-bot kraken-dashboard   # in the container of the bot
+cargo run --release -p kraken-dashboard -- kraken-bot.sqlite   # on a copy of the database
+```
+
+| Panel | Content |
+|-------|---------|
+| header | LIVE or DRY RUN (from the last order), the time since the last tick (STALE after 30 min), the UTC clock, the prices of the pairs scrolling |
+| tiles | equity, P&L (value - budget), realized by the sells, unrealized, win rate, fees and volume, open orders; the other quote currencies apart |
+| managers | value, P&L, position, entry price and the last price against it, open order and its fill, the trend of the value |
+| chart | `c` switches: the P&L over time, the price of the pair with the entry price and the open orders, the P&L of each sell |
+| orders | the blotter: side, price, volume, fill, cost, fee, status |
+| markets | the last price, 24 hours change, ATR, range and trend of the [indicators](#indicators-of-the-market), the spread |
+| tape | the decisions: orders placed, refused (✗), trailing, virtual managers; `i` shows the idle ones |
+
+Keys: `tab` the panel the arrows move in, `⏎` focus on the manager of the cursor (tiles, charts,
+orders and tape on it alone), `esc` back to all of them, `1`…`5` the range of the charts (1H, 24H,
+7D, 30D, ALL), `o` the open orders only, `?` the help, `q` quit. The database is checked every 2
+seconds (`--refresh SECONDS`), read again only when the bot wrote it. The P&L realized replays the
+orders as the ledger of the bot does: each sell against the cost of the base it sold, fees included.
+
+A demo database, 7 days of a simulated market traded by the strategy, written by the storage of
+the bot:
+
+```sh
+cargo run -p kraken-dashboard --example demo -- demo.sqlite
+cargo run -p kraken-dashboard -- demo.sqlite
+```
 
 ## Notifications
 
