@@ -712,12 +712,18 @@ impl<E: Exchange> Bot<E> {
         else {
             return Ok(None);
         };
-        // the buy was placed at -buy_below% of this price
-        let below = Decimal::ONE - percent(manager.buy_below);
-        if below <= Decimal::ZERO {
-            return Ok(None);
-        }
-        let placed_from = limit / below;
+        let placed_from = match self.storage.order_reference(&order.txid)? {
+            Some(reference) => reference,
+            // placed before the references were recorded: the highest price it can have been
+            // placed from, its limit having been rounded down to the tick of the pair
+            None => {
+                let below = Decimal::ONE - percent(manager.buy_below);
+                if below <= Decimal::ZERO {
+                    return Ok(None);
+                }
+                (limit + market.rules.tick_size) / below
+            }
+        };
         if market.reference <= placed_from * (Decimal::ONE + percent(trailing)) {
             return Ok(None);
         }
@@ -887,6 +893,9 @@ impl<E: Exchange> Bot<E> {
                         close_time: None,
                         expire_time: None,
                     }])?;
+                    if side == OrderSide::Buy {
+                        self.storage.set_order_reference(txid, market.reference)?;
+                    }
                 }
                 tracing::info!(manager = manager.id, order = %answer.description.order, ?txid, dry_run, "order accepted");
                 let notify_dry_run = self

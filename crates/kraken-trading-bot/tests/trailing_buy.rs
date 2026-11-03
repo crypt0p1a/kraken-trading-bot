@@ -204,3 +204,67 @@ async fn a_buy_gone_meanwhile_is_waited_for() {
             .all(|it| it.kind != "buy_cancelled")
     );
 }
+
+#[tokio::test]
+async fn trails_from_the_price_the_buy_was_placed_from_whatever_the_configuration_became() {
+    let directory = std::env::temp_dir().join(format!("trailing-{}", std::process::id()));
+    let path = directory.join("bot.sqlite");
+    let exchange = SimulatedExchange::new(1_800_000_000.0);
+    exchange.add_pair(BTC, "XBTUSD", "XXBT", "ZUSD", d("50000"));
+    exchange.deposit("ZUSD", d("1000"));
+    let manager = |buy_below: &str| {
+        BotConfig::parse(&format!(
+            "dry_run: false
+buy_trailing: 0.5
+managers:
+  - {{id: 1, pair: XBTUSD, budget: 100, buy_below: {buy_below}, sell_above: 1.5}}"
+        ))
+        .unwrap()
+    };
+
+    // placed at -5% of 50000
+    let mut bot = Bot::new(exchange, Storage::open(&path).unwrap(), manager("5"));
+    bot.prepare().await.unwrap();
+    assert_eq!(buy_price(&tick(&mut bot).await), d("47500"));
+
+    // buy_below is now 1: the open buy was still placed from 50000, the price didn't move
+    let mut bot = Bot::new(
+        bot.into_exchange(),
+        Storage::open(&path).unwrap(),
+        manager("1"),
+    );
+    bot.prepare().await.unwrap();
+    assert_eq!(tick(&mut bot).await, Outcome::Waited);
+    bot.exchange().set_price(BTC, d("50200"));
+    assert_eq!(tick(&mut bot).await, Outcome::Waited);
+    bot.exchange().set_price(BTC, d("50300"));
+    assert!(matches!(tick(&mut bot).await, Outcome::Cancelled(_)));
+
+    drop(bot);
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[tokio::test]
+async fn a_buy_without_its_reference_never_trails_too_early() {
+    let mut bot = bot("buy_trailing: 0.5").await;
+    tick(&mut bot).await;
+    // as if placed before the references were recorded: from 50000, its limit rounded down
+    let txid = bot.exchange().orders()[0].txid.clone();
+    let storage = Storage::open_in_memory().unwrap();
+    storage
+        .upsert_orders(&bot.storage().orders_of(1).unwrap())
+        .unwrap();
+    assert_eq!(storage.order_reference(&txid).unwrap(), None);
+    let mut bot = Bot::new(
+        bot.into_exchange(),
+        storage,
+        config(false, "buy_trailing: 0.5"),
+    );
+    bot.prepare().await.unwrap();
+
+    // (49500 + 0.1) / 0.99 = 50000.1: no trailing at +0.5% of 50000 exactly
+    bot.exchange().set_price(BTC, d("50250"));
+    assert_eq!(tick(&mut bot).await, Outcome::Waited);
+    bot.exchange().set_price(BTC, d("50260"));
+    assert!(matches!(tick(&mut bot).await, Outcome::Cancelled(_)));
+}

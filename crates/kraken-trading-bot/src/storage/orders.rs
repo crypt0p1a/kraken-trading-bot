@@ -171,6 +171,30 @@ impl Storage {
     pub fn order(&self, txid: &str) -> Result<Option<BotOrder>> {
         Ok(self.orders_where("txid = ?1", [txid])?.into_iter().next())
     }
+
+    /// The price of the market the order was placed from: Kraken doesn't keep it
+    pub fn set_order_reference(&self, txid: &str, reference: rust_decimal::Decimal) -> Result<()> {
+        self.connection.execute(
+            "INSERT OR REPLACE INTO order_references (txid, reference) VALUES (?1, ?2)",
+            params![txid, reference.to_string()],
+        )?;
+        Ok(())
+    }
+
+    /// The price of the market the order was placed from, None for an order placed before it was
+    /// recorded, or by another database
+    pub fn order_reference(&self, txid: &str) -> Result<Option<rust_decimal::Decimal>> {
+        use rusqlite::OptionalExtension;
+        self.connection
+            .query_row(
+                "SELECT reference FROM order_references WHERE txid = ?1",
+                [txid],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .map(decimal)
+            .transpose()
+    }
 }
 
 #[cfg(test)]
@@ -260,5 +284,18 @@ mod tests {
             .map(|it| it.open_time)
             .collect();
         assert_eq!(times, [1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn keeps_the_reference_of_an_order() {
+        let storage = Storage::open_in_memory().unwrap();
+        assert_eq!(storage.order_reference("OAAAAA").unwrap(), None);
+        storage
+            .set_order_reference("OAAAAA", crate::planner::tests::d("50000.1"))
+            .unwrap();
+        assert_eq!(
+            storage.order_reference("OAAAAA").unwrap(),
+            Some(crate::planner::tests::d("50000.1"))
+        );
     }
 }

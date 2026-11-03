@@ -9,6 +9,7 @@
 //! | `tickers` | the prices of the pairs of the managers, at each tick |
 //! | `sync_state` | where the synchronization of the orders is |
 //! | `virtual_managers` | the managers added by the bot, deleted ones included |
+//! | `order_references` | the price of the market each buy was placed from |
 //! | `indicators` | the trend and the volatility of the pairs over 24 hours, at each tick |
 //!
 //! The amounts are stored as text, to stay exact. The timestamps are UTC milliseconds, except the
@@ -155,6 +156,12 @@ CREATE TABLE indicators (
     change_24h_percent REAL NOT NULL,
     candles            INTEGER NOT NULL,
     PRIMARY KEY (pair, at)
+);
+"#,
+    r#"
+CREATE TABLE order_references (
+    txid      TEXT PRIMARY KEY,
+    reference TEXT NOT NULL
 );
 "#,
 ];
