@@ -1,0 +1,11 @@
+[package]
+name = "kraken-dashboard"
+description = "Terminal dashboard of kraken-trading-bot: its managers, their orders and their P&L, live from its database"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+rusqlite.workspace = true
+rust_decimal.workspace = true
