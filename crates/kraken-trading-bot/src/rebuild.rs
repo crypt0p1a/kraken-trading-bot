@@ -28,6 +28,10 @@ use std::collections::{BTreeMap, HashSet};
 
 /// In the sync state once the orders of Kraken have been searched for virtual managers
 pub const REBUILT: &str = "virtual_managers_rebuilt";
+/// In the sync state after a failed search: when to try again
+pub const RETRY_AT: &str = "virtual_managers_rebuild_retry_at";
+/// A failed search is tried again an hour later
+pub const RETRY_SECONDS: f64 = 3600.0;
 
 /// A budget the first buy differs from by more than this ratio is the one of the orders
 const BUDGET_TOLERANCE: Decimal = Decimal::from_parts(2, 0, 0, false, 2);
@@ -102,6 +106,14 @@ async fn price_at<E: Exchange>(exchange: &E, pair: &str, time: f64) -> BotResult
         .find(|it| it.time < time)
         .or(trades.first())
         .map(|it| it.price))
+}
+
+/// What a search of the orders of Kraken rebuilt
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RebuildReport {
+    pub rebuilt: Vec<Rebuilt>,
+    /// Userrefs which couldn't be rebuilt now (a call to Kraken failing): tried again later
+    pub failed: usize,
 }
 
 /// What the rebuild found for a virtual manager
@@ -187,6 +199,120 @@ pub async fn rebuild_one<E: Exchange>(
     }))
 }
 
+/// Rebuilds the virtual manager of this userref from its orders. None when it's left untouched
+#[allow(clippy::too_many_arguments)]
+async fn rebuild_id<E: Exchange>(
+    exchange: &E,
+    storage: &Storage,
+    config: &BotConfig,
+    pairs: &std::collections::HashMap<String, kraken_api::market::AssetPair>,
+    id: i32,
+    orders: &[BotOrder],
+    now_ms: i64,
+) -> BotResult<Option<Rebuilt>> {
+    let Some(decoded) = VirtualId::decode(id) else {
+        tracing::warn!(
+            manager = id,
+            "a userref of virtual manager which copies no manager: left untouched"
+        );
+        return Ok(None);
+    };
+    let Some((key, pair)) = pairs
+        .iter()
+        .find(|(key, pair)| PairRules::matches(&orders[0].pair, key, pair))
+    else {
+        tracing::warn!(manager = id, pair = %orders[0].pair, "the pair of a virtual manager is unknown: left untouched");
+        return Ok(None);
+    };
+    let rules = PairRules::from_asset_pair(key, pair);
+    let fee = exchange
+        .trade_volume(std::slice::from_ref(key))
+        .await?
+        .fees
+        .get(key)
+        .map(|it| it.fee)
+        .ok_or_else(|| BotError::Config(format!("no fee for {key}")))?;
+    let fee_rate = percent(fee);
+
+    // the copied manager, if it still trades the same pair
+    let template = config
+        .managers
+        .iter()
+        .find(|it| it.id == decoded.template && PairRules::matches(&it.pair, key, pair));
+
+    let found = rebuild_one(
+        exchange,
+        id,
+        template,
+        FALLBACK_SELL_ABOVE,
+        orders,
+        &rules,
+        fee_rate,
+    )
+    .await?;
+    let holds_orders = orders.iter().any(|it| !it.is_final());
+    let (manager, holds, reason) = match found {
+        Some(config) => {
+            let balances = ledger::compute(config.budget, orders);
+            let base = balances.base_available + balances.base_in_sell_order;
+            let holds = holds_orders || base >= rules.ordermin;
+            let source = match template {
+                Some(_) => format!("copy of manager {}", decoded.template),
+                None => format!("manager {} is gone: closing", decoded.template),
+            };
+            let reason = format!("rebuilt from {} orders of Kraken, {source}", orders.len());
+            (config, holds, reason)
+        }
+        None => {
+            tracing::warn!(
+                manager = id,
+                "the orders of a virtual manager don't say how to sell what it holds: left untouched, its id stays taken"
+            );
+            let manager = ManagerConfig {
+                id,
+                pair: rules.altname.clone(),
+                budget: Decimal::ZERO,
+                buy_below: Decimal::ZERO,
+                sell_above: Decimal::ZERO,
+                mode: ManagerMode::Closing,
+            };
+            (
+                manager,
+                false,
+                "can't be rebuilt from its orders".to_string(),
+            )
+        }
+    };
+
+    storage.add_virtual_manager(&VirtualManager {
+        config: manager.clone(),
+        template_id: decoded.template,
+        created_at: now_ms,
+        reason: reason.clone(),
+    })?;
+    if !holds {
+        storage.delete_virtual_manager(id, now_ms, &format!("{reason}: holds nothing"))?;
+    }
+    storage.record_action(&ActionRecord {
+        manager_id: id,
+        at: now_ms,
+        kind: "virtual_rebuilt".into(),
+        amount: Some(manager.budget),
+        price: None,
+        reason: Some(reason.clone()),
+        dry_run: config.dry_run,
+        txid: None,
+        error: None,
+    })?;
+    tracing::info!(manager = id, holds, pair = %manager.pair, budget = %manager.budget, buy_below = %manager.buy_below, sell_above = %manager.sell_above, %reason, "virtual manager rebuilt");
+    Ok(Some(Rebuilt {
+        config: manager,
+        template_id: decoded.template,
+        holds,
+        reason,
+    }))
+}
+
 /// Searches every order of the account for the virtual managers the database doesn't know, and
 /// saves them
 pub async fn rebuild<E: Exchange>(
@@ -194,7 +320,7 @@ pub async fn rebuild<E: Exchange>(
     storage: &Storage,
     config: &BotConfig,
     now_ms: i64,
-) -> BotResult<Vec<Rebuilt>> {
+) -> BotResult<RebuildReport> {
     let known: HashSet<i32> = storage.virtual_ids()?.into_iter().collect();
     let open = exchange.open_orders().await?;
     let closed = sync::all_closed(exchange, ClosedOrdersRequest::default()).await?;
@@ -210,115 +336,23 @@ pub async fn rebuild<E: Exchange>(
         }
     }
     if by_id.is_empty() {
-        return Ok(Vec::new());
+        return Ok(RebuildReport::default());
     }
 
     let pairs = exchange.asset_pairs(&[]).await?;
-    let mut rebuilt = Vec::new();
+    let mut report = RebuildReport::default();
     for (id, orders) in by_id {
-        let Some(decoded) = VirtualId::decode(id) else {
-            tracing::warn!(
-                manager = id,
-                "a userref of virtual manager which copies no manager: left untouched"
-            );
-            continue;
-        };
-        let Some((key, pair)) = pairs
-            .iter()
-            .find(|(key, pair)| PairRules::matches(&orders[0].pair, key, pair))
-        else {
-            tracing::warn!(manager = id, pair = %orders[0].pair, "the pair of a virtual manager is unknown: left untouched");
-            continue;
-        };
-        let rules = PairRules::from_asset_pair(key, pair);
-        let fee = exchange
-            .trade_volume(std::slice::from_ref(key))
-            .await?
-            .fees
-            .get(key)
-            .map(|it| it.fee)
-            .ok_or_else(|| BotError::Config(format!("no fee for {key}")))?;
-        let fee_rate = percent(fee);
-
-        // the copied manager, if it still trades the same pair
-        let template = config
-            .managers
-            .iter()
-            .find(|it| it.id == decoded.template && PairRules::matches(&it.pair, key, pair));
-
-        let found = rebuild_one(
-            exchange,
-            id,
-            template,
-            FALLBACK_SELL_ABOVE,
-            &orders,
-            &rules,
-            fee_rate,
-        )
-        .await?;
-        let holds_orders = orders.iter().any(|it| !it.is_final());
-        let (manager, holds, reason) = match found {
-            Some(config) => {
-                let balances = ledger::compute(config.budget, &orders);
-                let base = balances.base_available + balances.base_in_sell_order;
-                let holds = holds_orders || base >= rules.ordermin;
-                let source = match template {
-                    Some(_) => format!("copy of manager {}", decoded.template),
-                    None => format!("manager {} is gone: closing", decoded.template),
-                };
-                let reason = format!("rebuilt from {} orders of Kraken, {source}", orders.len());
-                (config, holds, reason)
+        // one which can't be rebuilt now doesn't stop the others: it's tried again later
+        match rebuild_id(exchange, storage, config, &pairs, id, &orders, now_ms).await {
+            Ok(Some(rebuilt)) => report.rebuilt.push(rebuilt),
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(manager = id, %error, "a virtual manager couldn't be rebuilt: tried again later");
+                report.failed += 1;
             }
-            None => {
-                tracing::warn!(
-                    manager = id,
-                    "the orders of a virtual manager don't say how to sell what it holds: left untouched, its id stays taken"
-                );
-                let manager = ManagerConfig {
-                    id,
-                    pair: rules.altname.clone(),
-                    budget: Decimal::ZERO,
-                    buy_below: Decimal::ZERO,
-                    sell_above: Decimal::ZERO,
-                    mode: ManagerMode::Closing,
-                };
-                (
-                    manager,
-                    false,
-                    "can't be rebuilt from its orders".to_string(),
-                )
-            }
-        };
-
-        storage.add_virtual_manager(&VirtualManager {
-            config: manager.clone(),
-            template_id: decoded.template,
-            created_at: now_ms,
-            reason: reason.clone(),
-        })?;
-        if !holds {
-            storage.delete_virtual_manager(id, now_ms, &format!("{reason}: holds nothing"))?;
         }
-        storage.record_action(&ActionRecord {
-            manager_id: id,
-            at: now_ms,
-            kind: "virtual_rebuilt".into(),
-            amount: Some(manager.budget),
-            price: None,
-            reason: Some(reason.clone()),
-            dry_run: config.dry_run,
-            txid: None,
-            error: None,
-        })?;
-        tracing::info!(manager = id, holds, pair = %manager.pair, budget = %manager.budget, buy_below = %manager.buy_below, sell_above = %manager.sell_above, %reason, "virtual manager rebuilt");
-        rebuilt.push(Rebuilt {
-            config: manager,
-            template_id: decoded.template,
-            holds,
-            reason,
-        });
     }
-    Ok(rebuilt)
+    Ok(report)
 }
 
 #[cfg(test)]

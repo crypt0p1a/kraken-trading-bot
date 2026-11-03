@@ -453,17 +453,52 @@ impl<E: Exchange> Bot<E> {
         if !self.config.virtual_managers || self.storage.state(rebuild::REBUILT)?.is_some() {
             return Ok(());
         }
-        let rebuilt =
-            rebuild::rebuild(&self.exchange, &self.storage, &self.config, now_millis()).await?;
-        if !rebuilt.is_empty() {
-            tracing::warn!(
-                rebuilt = rebuilt.len(),
-                holding = rebuilt.iter().filter(|it| it.holds).count(),
-                "virtual managers rebuilt from the orders of Kraken"
-            );
+        let now = self.exchange.now();
+        let retry_at = self
+            .storage
+            .state(rebuild::RETRY_AT)?
+            .and_then(|it| it.parse::<f64>().ok());
+        if retry_at.is_some_and(|it| now < it) {
+            return Ok(());
         }
-        self.storage
-            .set_state(rebuild::REBUILT, &self.exchange.now().to_string())?;
+
+        // a failure doesn't stop the managers: the search is tried again an hour later
+        let failure =
+            match rebuild::rebuild(&self.exchange, &self.storage, &self.config, now_millis()).await
+            {
+                Ok(report) => {
+                    if !report.rebuilt.is_empty() {
+                        tracing::warn!(
+                            rebuilt = report.rebuilt.len(),
+                            holding = report.rebuilt.iter().filter(|it| it.holds).count(),
+                            "virtual managers rebuilt from the orders of Kraken"
+                        );
+                    }
+                    (report.failed > 0).then(|| {
+                        format!(
+                            "{} virtual manager(s) couldn't be rebuilt from the orders of Kraken",
+                            report.failed
+                        )
+                    })
+                }
+                Err(error) => Some(format!(
+                    "the orders of Kraken couldn't be searched: {error}"
+                )),
+            };
+        match failure {
+            None => {
+                self.storage.set_state(rebuild::REBUILT, &now.to_string())?;
+                self.clear_failure("rebuild");
+            }
+            Some(error) => {
+                tracing::warn!(%error, "the rebuild of the virtual managers is tried again in an hour");
+                self.storage.set_state(
+                    rebuild::RETRY_AT,
+                    &(now + rebuild::RETRY_SECONDS).to_string(),
+                )?;
+                self.notify_failure("rebuild", None, &error).await;
+            }
+        }
         Ok(())
     }
 

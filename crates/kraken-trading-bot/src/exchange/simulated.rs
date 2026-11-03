@@ -37,6 +37,8 @@ struct State {
     add_order_calls: usize,
     /// The error every cancellation answers, when set
     cancel_error: Option<String>,
+    /// The error every read of the trades answers, when set
+    trades_error: Option<String>,
 }
 
 fn error(body: &str) -> KrakenError {
@@ -60,6 +62,7 @@ impl SimulatedExchange {
                 next_txid: 1,
                 add_order_calls: 0,
                 cancel_error: None,
+                trades_error: None,
             }),
         }
     }
@@ -239,6 +242,11 @@ impl SimulatedExchange {
         self.state().cancel_error = error.map(str::to_string);
     }
 
+    /// Every read of the trades fails with this error of Kraken, none when None
+    pub fn fail_trades(&self, error: Option<&str>) {
+        self.state().trades_error = error.map(str::to_string);
+    }
+
     pub fn add_order_calls(&self) -> usize {
         self.state().add_order_calls
     }
@@ -406,6 +414,9 @@ impl Exchange for SimulatedExchange {
     /// A trade at `since` at the price of then, then one at each change of the price
     async fn trades(&self, pair: &str, since: f64) -> ExchangeResult<Vec<PublicTrade>> {
         let state = self.state();
+        if let Some(body) = &state.trades_error {
+            return Err(error(body));
+        }
         let history = state.history.get(pair).cloned().unwrap_or_default();
         let then = history
             .iter()

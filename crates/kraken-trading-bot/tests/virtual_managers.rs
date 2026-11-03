@@ -587,3 +587,26 @@ async fn a_copy_of_a_closing_manager_is_rebuilt_closing() {
         kraken_trading_bot::config::ManagerMode::Closing
     );
 }
+
+#[tokio::test]
+async fn a_rebuild_failing_doesnt_stop_the_managers_and_is_tried_again() {
+    let bot = selling_virtual_manager().await;
+    let mut bot = restart(bot, ONE).await;
+    bot.exchange().fail_trades(Some("EService:Unavailable"));
+
+    // the managers of the file trade, the virtual one waits for its rebuild
+    let report = bot.tick().await.unwrap();
+    assert!(report.outcomes.contains_key(&1));
+    assert!(!report.outcomes.contains_key(&VIRTUAL));
+    assert!(bot.storage().virtual_ids().unwrap().is_empty());
+
+    // not tried again within the hour, even once Kraken answers
+    bot.exchange().fail_trades(None);
+    bot.tick().await.unwrap();
+    assert!(bot.storage().virtual_ids().unwrap().is_empty());
+
+    // an hour later: rebuilt
+    bot.exchange().advance(3601.0);
+    bot.tick().await.unwrap();
+    assert_eq!(bot.storage().virtual_ids().unwrap(), vec![VIRTUAL]);
+}
