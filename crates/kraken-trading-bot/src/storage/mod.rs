@@ -12,15 +12,18 @@
 //! | `order_references` | the price of the market each buy was placed from |
 //! | `indicators` | the trend and the volatility of the pairs over 24 hours, at each tick |
 //! | `account_snapshots` | what the whole account is worth at each tick, per quote currency |
+//! | `commands` | what is asked of the bot from outside: `forced_tick`, a tick now |
 //!
 //! The amounts are stored as text, to stay exact. The timestamps are UTC milliseconds, except the
 //! times of the orders which are the seconds of Kraken.
 
+mod commands;
 mod journal;
 mod managers;
 mod orders;
 mod virtuals;
 
+pub use commands::{CommandState, FORCED_TICK};
 pub use journal::{AccountRecord, ActionRecord, TickerRecord};
 pub use managers::ManagerState;
 pub use virtuals::VirtualManager;
@@ -174,6 +177,15 @@ CREATE TABLE account_snapshots (
     holdings TEXT NOT NULL,
     PRIMARY KEY (at, quote)
 );
+"#,
+    // what is asked of the bot from outside, the dashboard: one row per command
+    r#"
+CREATE TABLE commands (
+    key        TEXT PRIMARY KEY,
+    state      TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+INSERT INTO commands (key, state, updated_at) VALUES ('forced_tick', 'idle', 0);
 "#,
 ];
 

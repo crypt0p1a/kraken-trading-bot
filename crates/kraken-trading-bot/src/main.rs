@@ -11,12 +11,17 @@
 
 use kraken_api::RestOptions;
 use kraken_trading_bot::bot::{Bot, Outcome};
+use kraken_trading_bot::clock::now_millis;
 use kraken_trading_bot::config::{BotConfig, Environment};
 use kraken_trading_bot::exchange::KrakenExchange;
-use kraken_trading_bot::storage::Storage;
+use kraken_trading_bot::storage::{FORCED_TICK, Storage};
 use std::process::ExitCode;
+use std::time::Duration;
 use tracing_subscriber::EnvFilter;
 use trading_notify::Notifier;
+
+/// How often a tick asked for from outside (the dashboard) is looked for, between two ticks
+const COMMAND_POLL: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Mode {
@@ -119,15 +124,38 @@ async fn run(mode: Mode) -> Result<(), String> {
             }
         }
 
+        // a forced tick is done with this one, whatever its outcome
+        if let Err(error) = bot.storage().end_command(FORCED_TICK, now_millis()) {
+            tracing::warn!(%error, "the forced tick couldn't be ended");
+        }
+
         if mode == Mode::Once {
             return Ok(());
         }
 
-        tokio::select! {
-            _ = tokio::time::sleep(interval) => {}
-            _ = &mut shutdown => {
-                tracing::info!("stopping");
-                return Ok(());
+        // until the next tick, or a tick asked for meanwhile (the dashboard)
+        let next = tokio::time::Instant::now() + interval;
+        loop {
+            let wait = next
+                .saturating_duration_since(tokio::time::Instant::now())
+                .min(COMMAND_POLL);
+            if wait.is_zero() {
+                break;
+            }
+            tokio::select! {
+                _ = tokio::time::sleep(wait) => {}
+                _ = &mut shutdown => {
+                    tracing::info!("stopping");
+                    return Ok(());
+                }
+            }
+            match bot.storage().start_command(FORCED_TICK, now_millis()) {
+                Ok(true) => {
+                    tracing::info!("tick forced");
+                    break;
+                }
+                Ok(false) => {}
+                Err(error) => tracing::warn!(%error, "the forced tick couldn't be read"),
             }
         }
     }
