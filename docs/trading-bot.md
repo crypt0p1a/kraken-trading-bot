@@ -47,6 +47,10 @@ managers:
 - To stop a manager, set `mode: closing`, and remove it once it holds nothing: the open orders of
   a userref no manager has are reported in the logs and left untouched.
 - Changing the budget or the percentages of a manager applies from its next order.
+- `buy_trailing` compares the price with the one each buy was placed from, recorded with it:
+  editing `buy_below` doesn't cancel the open buys. A dry run never cancels. A cancellation Kraken
+  refuses (permission, rate limit) is a failure of the manager, notified once; the buy placed again
+  is notified, not the cancelled one.
 - The configuration is checked at start: unique ids, known pairs, valid percentages.
 
 | Variable | Default | |
@@ -191,7 +195,8 @@ docker run --rm -v kraken-rust_kraken-bot-data:/data -it keinos/sqlite3 sqlite3 
 - `scenarios.rs`: the bot tick after tick on a simulated Kraken (fills, expiry, partial fills,
   closing managers, missing funds, orphans, restart without database, refused orders, dry run,
   600 ticks of a random market where every cycle makes money, only limit orders)
-- `trailing_buy.rs`: the buys placed again when the price rises, only the ones not filled at all
+- `trailing_buy.rs`: the buys placed again when the price rises, only the ones not filled at all,
+  from the price they were placed from, never in a dry run, a refused cancellation notified
 - `indicators.rs`: the indicators recorded once 12 hours of candles exist
 - `virtual_managers.rs`: the virtual managers on a simulated Kraken (added with the margin,
   deleted without money or once closed, rebuilt after the loss of the database)
