@@ -288,7 +288,7 @@ async fn the_orders_of_a_virtual_manager_are_notified_and_summed_up() {
         exchange("200"),
         false,
         "  events: [placed, filled, daily_summary]\n  daily_summary_hour: 20
-virtual_managers: {min_virtual_id: 1000000}",
+virtual_managers: true",
         ONE,
     )
     .await;

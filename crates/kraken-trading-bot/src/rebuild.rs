@@ -8,10 +8,12 @@
 //!
 //! A parameter the orders contradict is taken from the orders. A virtual manager whose copied
 //! manager is gone is rebuilt closing, from its orders alone: without any sell, it sells for
-//! what its buy cost + `fallback_sell_above`%. One which holds nothing is rebuilt
+//! what its buy cost + `FALLBACK_SELL_ABOVE`%. One which holds nothing is rebuilt
 //! deleted: its id stays taken.
 
-use crate::config::{BotConfig, ManagerConfig, ManagerMode, VirtualManagersConfig};
+use crate::config::{
+    BotConfig, FALLBACK_SELL_ABOVE, ManagerConfig, ManagerMode, VirtualId, is_virtual,
+};
 use crate::decimal::percent;
 use crate::exchange::Exchange;
 use crate::ledger;
@@ -191,7 +193,6 @@ pub async fn rebuild<E: Exchange>(
     exchange: &E,
     storage: &Storage,
     config: &BotConfig,
-    virtuals: &VirtualManagersConfig,
     now_ms: i64,
 ) -> BotResult<Vec<Rebuilt>> {
     let known: HashSet<i32> = storage.virtual_ids()?.into_iter().collect();
@@ -201,7 +202,7 @@ pub async fn rebuild<E: Exchange>(
     let mut by_id: BTreeMap<i32, Vec<BotOrder>> = BTreeMap::new();
     let mut txids = HashSet::new();
     for order in open.iter().chain(&closed).filter_map(BotOrder::from_kraken) {
-        if virtuals.is_virtual(order.manager_id)
+        if is_virtual(order.manager_id)
             && !known.contains(&order.manager_id)
             && txids.insert(order.txid.clone())
         {
@@ -215,7 +216,7 @@ pub async fn rebuild<E: Exchange>(
     let pairs = exchange.asset_pairs(&[]).await?;
     let mut rebuilt = Vec::new();
     for (id, orders) in by_id {
-        let Some(decoded) = virtuals.decode(id) else {
+        let Some(decoded) = VirtualId::decode(id) else {
             tracing::warn!(
                 manager = id,
                 "a userref of virtual manager which copies no manager: left untouched"
@@ -249,7 +250,7 @@ pub async fn rebuild<E: Exchange>(
             exchange,
             id,
             template,
-            virtuals.fallback_sell_above,
+            FALLBACK_SELL_ABOVE,
             &orders,
             &rules,
             fee_rate,

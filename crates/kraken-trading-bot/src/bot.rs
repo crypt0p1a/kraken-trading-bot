@@ -2,7 +2,7 @@
 //! ManagersPool of cex-trading-bot
 
 use crate::clock::now_millis;
-use crate::config::{BotConfig, EventKind, ManagerConfig, ManagerMode, VirtualId};
+use crate::config::{BotConfig, EventKind, ManagerConfig, ManagerMode, VirtualId, is_virtual};
 use crate::decimal::percent;
 use crate::exchange::Exchange;
 use crate::ledger::{self, Balances};
@@ -103,7 +103,7 @@ impl<E: Exchange> Bot<E> {
     /// The managers of the YAML file, then the virtual managers
     pub fn managers(&self) -> BotResult<Vec<ManagerConfig>> {
         let mut managers = self.config.managers.clone();
-        if self.config.virtual_managers.is_some() {
+        if self.config.virtual_managers {
             managers.extend(
                 self.storage
                     .virtual_managers()?
@@ -438,20 +438,11 @@ impl<E: Exchange> Bot<E> {
     /// Once per database: the virtual managers found in the orders of Kraken it doesn't know,
     /// lost with a previous database. Before any virtual manager is added, not to reuse their ids
     async fn rebuild_virtual_managers(&self) -> BotResult<()> {
-        let Some(virtuals) = &self.config.virtual_managers else {
-            return Ok(());
-        };
-        if self.storage.state(rebuild::REBUILT)?.is_some() {
+        if !self.config.virtual_managers || self.storage.state(rebuild::REBUILT)?.is_some() {
             return Ok(());
         }
-        let rebuilt = rebuild::rebuild(
-            &self.exchange,
-            &self.storage,
-            &self.config,
-            virtuals,
-            now_millis(),
-        )
-        .await?;
+        let rebuilt =
+            rebuild::rebuild(&self.exchange, &self.storage, &self.config, now_millis()).await?;
         if !rebuilt.is_empty() {
             tracing::warn!(
                 rebuilt = rebuilt.len(),
@@ -493,14 +484,7 @@ impl<E: Exchange> Bot<E> {
         markets: &HashMap<String, Market>,
         available: &HashMap<String, Decimal>,
     ) -> BotResult<Option<ManagerConfig>> {
-        let Some(virtuals) = self.config.virtual_managers.clone() else {
-            return Ok(None);
-        };
-        let count = managers
-            .iter()
-            .filter(|it| virtuals.is_virtual(it.id))
-            .count();
-        if count >= virtuals.max {
+        if !self.config.virtual_managers {
             return Ok(None);
         }
 
@@ -526,14 +510,14 @@ impl<E: Exchange> Bot<E> {
         let sequence = self
             .storage
             .last_virtual_id()?
-            .and_then(|it| virtuals.decode(it))
+            .and_then(VirtualId::decode)
             .map_or(0, |it| it.sequence + 1);
-        let id = virtuals
-            .encode(VirtualId {
-                sequence,
-                template: template.id,
-            })
-            .ok_or_else(|| BotError::Config("no id left for a virtual manager".into()))?;
+        let id = VirtualId {
+            sequence,
+            template: template.id,
+        }
+        .encode()
+        .ok_or_else(|| BotError::Config("no id left for a virtual manager".into()))?;
 
         let (quote, margin) = margin_of(&template);
         let reason = format!(
@@ -668,10 +652,7 @@ impl<E: Exchange> Bot<E> {
     }
 
     fn is_virtual(&self, manager: &ManagerConfig) -> bool {
-        self.config
-            .virtual_managers
-            .as_ref()
-            .is_some_and(|it| it.is_virtual(manager.id))
+        self.config.virtual_managers && is_virtual(manager.id)
     }
 
     /// Deletes a virtual manager which holds nothing: its id is never reused

@@ -3,7 +3,7 @@
 
 use kraken_api::trading::{OrderSide, OrderStatus};
 use kraken_trading_bot::bot::{Bot, Outcome};
-use kraken_trading_bot::config::{BotConfig, ManagerConfig, VirtualId, VirtualManagersConfig};
+use kraken_trading_bot::config::{BotConfig, ManagerConfig, VirtualId};
 use kraken_trading_bot::exchange::SimulatedExchange;
 use kraken_trading_bot::storage::Storage;
 use rust_decimal::Decimal;
@@ -11,7 +11,6 @@ use std::str::FromStr;
 
 const BTC: &str = "XXBTZUSD";
 const ETH: &str = "XETHZUSD";
-const MIN: i32 = 1_000_000;
 
 fn d(value: &str) -> Decimal {
     Decimal::from_str(value).unwrap()
@@ -60,13 +59,7 @@ fn virtuals(bot: &Bot<SimulatedExchange>) -> Vec<ManagerConfig> {
 }
 
 fn decode(id: i32) -> VirtualId {
-    VirtualManagersConfig {
-        min_virtual_id: MIN,
-        max: 5,
-        fallback_sell_above: d("1.5"),
-    }
-    .decode(id)
-    .unwrap()
+    VirtualId::decode(id).unwrap()
 }
 
 #[tokio::test]
@@ -81,12 +74,7 @@ async fn adds_no_manager_without_the_configuration() {
 #[tokio::test]
 async fn copies_the_managers_while_the_margin_pays_for_them() {
     // 50 USD for the managers of the file, 50 for nobody
-    let mut bot = bot(
-        exchange("100"),
-        "virtual_managers: {min_virtual_id: 1000000, max: 10}",
-        MANAGERS,
-    )
-    .await;
+    let mut bot = bot(exchange("100"), "virtual_managers: true", MANAGERS).await;
 
     for _ in 0..6 {
         bot.tick().await.unwrap();
@@ -130,7 +118,7 @@ async fn copies_the_managers_while_the_margin_pays_for_them() {
 async fn a_virtual_manager_trades_from_the_tick_it_is_added() {
     let mut bot = bot(
         exchange("80"),
-        "virtual_managers: {min_virtual_id: 1000000}",
+        "virtual_managers: true",
         "\n  - {id: 1, pair: XBTUSD, budget: 30, buy_below: 1, sell_above: 1.5}",
     )
     .await;
@@ -165,24 +153,10 @@ async fn a_virtual_manager_trades_from_the_tick_it_is_added() {
 }
 
 #[tokio::test]
-async fn keeps_to_the_most_virtual_managers() {
-    let mut bot = bot(
-        exchange("10000"),
-        "virtual_managers: {min_virtual_id: 1000000, max: 2}",
-        MANAGERS,
-    )
-    .await;
-    for _ in 0..5 {
-        bot.tick().await.unwrap();
-    }
-    assert_eq!(virtuals(&bot).len(), 2);
-}
-
-#[tokio::test]
 async fn copies_only_the_active_managers_of_the_quote_in_the_account() {
     let mut bot = bot(
         exchange("10000"),
-        "virtual_managers: {min_virtual_id: 1000000, max: 5}",
+        "virtual_managers: true",
         "
   - {id: 1, pair: XBTUSD, budget: 30, buy_below: 1, sell_above: 1.5, mode: closing}
   - {id: 2, pair: ETHUSD, budget: 20, buy_below: 2, sell_above: 3}
@@ -206,7 +180,7 @@ async fn the_gains_of_a_manager_are_not_a_margin() {
     let exchange = exchange("30");
     let mut bot = bot(
         exchange,
-        "virtual_managers: {min_virtual_id: 1000000}",
+        "virtual_managers: true",
         "\n  - {id: 1, pair: XBTUSD, budget: 30, buy_below: 1, sell_above: 1.5}",
     )
     .await;
@@ -228,12 +202,7 @@ const VIRTUAL: i32 = 1_000_001;
 
 /// Manager 1 and a copy of it, VIRTUAL, both waiting for their buy order
 async fn with_a_virtual_manager() -> Bot<SimulatedExchange> {
-    let mut bot = bot(
-        exchange("80"),
-        "virtual_managers: {min_virtual_id: 1000000}",
-        ONE,
-    )
-    .await;
+    let mut bot = bot(exchange("80"), "virtual_managers: true", ONE).await;
     bot.tick().await.unwrap();
     assert_eq!(
         virtuals(&bot).iter().map(|it| it.id).collect::<Vec<_>>(),
@@ -321,12 +290,7 @@ async fn keeps_a_virtual_manager_which_holds_a_position() {
 
 #[tokio::test]
 async fn never_deletes_a_manager_of_the_file() {
-    let mut bot = bot(
-        exchange("10"),
-        "virtual_managers: {min_virtual_id: 1000000}",
-        ONE,
-    )
-    .await;
+    let mut bot = bot(exchange("10"), "virtual_managers: true", ONE).await;
     for _ in 0..5 {
         let outcome = outcome(&mut bot, 1).await;
         assert!(
@@ -341,7 +305,7 @@ async fn restart(bot: Bot<SimulatedExchange>, managers: &str) -> Bot<SimulatedEx
     let mut bot = Bot::new(
         bot.into_exchange(),
         Storage::open_in_memory().unwrap(),
-        config("virtual_managers: {min_virtual_id: 1000000}", managers),
+        config("virtual_managers: true", managers),
     )
     .with_seed(7);
     bot.prepare().await.unwrap();
@@ -505,7 +469,7 @@ async fn without_a_sell_nor_its_copied_manager_it_sells_at_the_fallback() {
         bot.into_exchange(),
         Storage::open_in_memory().unwrap(),
         config(
-            "virtual_managers: {min_virtual_id: 1000000, fallback_sell_above: 2}",
+            "virtual_managers: true",
             "\n  - {id: 2, pair: ETHUSD, budget: 20, buy_below: 2, sell_above: 3}",
         ),
     )
@@ -526,7 +490,7 @@ async fn without_a_sell_nor_its_copied_manager_it_sells_at_the_fallback() {
         manager.mode,
         kraken_trading_bot::config::ManagerMode::Closing
     );
-    assert_eq!(manager.sell_above, d("2"));
+    assert_eq!(manager.sell_above, d("1.5"));
     assert_eq!(manager.budget.round_dp(1), d("30"));
 
     // filled: sold for what it cost + 2%, fees deducted
@@ -549,6 +513,6 @@ async fn without_a_sell_nor_its_copied_manager_it_sells_at_the_fallback() {
         .map(|it| it.cost + it.fee)
         .sum::<Decimal>();
     let brought = amount * price * (Decimal::ONE - d("0.0025"));
-    assert!(brought >= cost * d("1.02"), "{brought} for {cost}");
-    assert!(brought < cost * d("1.021"), "{brought} for {cost}");
+    assert!(brought >= cost * d("1.015"), "{brought} for {cost}");
+    assert!(brought < cost * d("1.016"), "{brought} for {cost}");
 }

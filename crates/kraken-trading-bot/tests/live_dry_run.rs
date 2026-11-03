@@ -39,10 +39,11 @@ async fn a_dry_run_tick_on_the_real_kraken() {
         RestOptions::default(),
     )
     .unwrap();
-    // ids no real manager uses; the virtual managers search the whole history of the account
+    // ids no real manager uses. The virtual managers of the account are rebuilt from its orders,
+    // in this database only
     let config = BotConfig::parse(
         "dry_run: true
-virtual_managers: {min_virtual_id: 2000000000, max: 1}
+virtual_managers: true
 managers:
   - {id: 998, pair: XBTUSD, budget: 10, buy_below: 1, sell_above: 1.5}
   - {id: 999, pair: ETH/EUR, budget: 10, buy_below: 2, sell_above: 3}",
@@ -50,6 +51,12 @@ managers:
     .unwrap();
     let mut bot = Bot::new(exchange, Storage::open_in_memory().unwrap(), config);
     bot.prepare().await.unwrap();
+    let txids = |orders: Vec<kraken_api::trading::Order>| {
+        let mut txids: Vec<_> = orders.into_iter().map(|it| it.txid).collect();
+        txids.sort();
+        txids
+    };
+    let before = txids(bot.exchange().open_orders().await.unwrap());
 
     let report = bot.tick().await.unwrap();
     println!("{report:#?}");
@@ -58,14 +65,11 @@ managers:
         match outcome {
             // validated by Kraken, not placed
             Outcome::Placed { txid, .. } => assert!(txid.is_none(), "{id}: an order was placed"),
-            // the account may not have the money
-            Outcome::Idle(_) => {}
+            // the account may not have the money; a rebuilt virtual manager waits for its order
+            Outcome::Idle(_) | Outcome::Waited => {}
             other => panic!("{id}: {other:?}"),
         }
     }
-    let open = bot.exchange().open_orders().await.unwrap();
-    assert!(
-        open.iter()
-            .all(|it| it.userref.unwrap_or_default() < 2_000_000_000)
-    );
+    // nothing placed, nothing cancelled
+    assert_eq!(txids(bot.exchange().open_orders().await.unwrap()), before);
 }

@@ -243,7 +243,7 @@ async fn searches_the_whole_history_for_virtual_managers_once() {
     let server = kraken().await;
     let config = BotConfig::parse(
         "dry_run: true
-virtual_managers: {min_virtual_id: 1000000}
+virtual_managers: true
 managers:
   - {id: 42, pair: XBTUSD, budget: 100, buy_below: 1, sell_above: 1.5}",
     )
