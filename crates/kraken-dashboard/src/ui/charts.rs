@@ -1,5 +1,5 @@
-//! The chart, one of three: the P&L over time, the price with the levels of the orders, the P&L
-//! of each sell
+//! The chart, one of four: the P&L over time, the portfolio, the price with the levels of the
+//! orders, the P&L of each sell
 
 use super::{panel, title};
 use crate::app::{App, Chart, now_millis};
@@ -17,6 +17,7 @@ use ratatui::widgets::{Axis, Block, Dataset, GraphType, LegendPosition, Paragrap
 fn tabs(app: &App) -> Vec<Span<'static>> {
     [
         (Chart::Pnl, "P&L"),
+        (Chart::Portfolio, "VALUE"),
         (Chart::Price, "PRICE"),
         (Chart::Trades, "SELLS"),
     ]
@@ -113,6 +114,7 @@ fn level(since: i64, now: i64, value: f64) -> Vec<(f64, f64)> {
 pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     match app.chart {
         Chart::Pnl => render_pnl(frame, app, area),
+        Chart::Portfolio => render_portfolio(frame, app, area),
         Chart::Price => render_price(frame, app, area),
         Chart::Trades => render_trades(frame, app, area),
     }
@@ -181,6 +183,137 @@ fn render_pnl(frame: &mut Frame, app: &App, area: Rect) {
         .block(block)
         .x_axis(time_axis(since, now))
         .y_axis(value_axis(y, format::signed));
+    frame.render_widget(chart, area);
+}
+
+/// The value at a time: the last point before it, the first one before them all
+fn value_at(series: &[(f64, f64)], at: f64) -> f64 {
+    series
+        .iter()
+        .take_while(|it| it.0 <= at)
+        .last()
+        .or(series.first())
+        .map_or(0.0, |it| it.1)
+}
+
+fn render_portfolio(frame: &mut Frame, app: &App, area: Rect) {
+    let ids = app.charted();
+    let totals = app.model.totals_of(&ids);
+    let quote = totals.quote.clone();
+    // the whole account, or the manager focused on
+    let account = app
+        .focus()
+        .is_none()
+        .then(|| app.model.account(&quote))
+        .flatten();
+    let (name, series) = match app.focus() {
+        Some(manager) => (
+            format!("MANAGER #{} · {quote}", manager.id),
+            app.model.manager_series(manager.id),
+        ),
+        None => (
+            format!("PORTFOLIO · {quote}"),
+            app.model.account_series(&quote),
+        ),
+    };
+    if series.len() < 2 {
+        let block = block(app, name);
+        empty(frame, area, block, "NOT ENOUGH TICKS IN THE RANGE");
+        return;
+    }
+
+    let now = now_millis();
+    let since = app.model.data.since.min(series[0].0 as i64);
+    let (current, target) = totals.current_and_target(account);
+    let (current, target) = (to_f64(current), to_f64(target));
+    let moved = current - series[0].1;
+
+    // the orders filled in the range, on the curve
+    let mut buys = Vec::new();
+    let mut sells = Vec::new();
+    for order in
+        app.model.data.orders.iter().filter(|it| {
+            it.is_final && !it.volume_executed.is_zero() && ids.contains(&it.manager_id)
+        })
+    {
+        let at = order.close_time.unwrap_or(order.open_time) * 1000.0;
+        if at >= since as f64 {
+            let point = (at, value_at(&series, at));
+            match order.side {
+                Side::Buy => buys.push(point),
+                Side::Sell => sells.push(point),
+            }
+        }
+    }
+
+    let y = bounds(series.iter().map(|it| it.1).chain([target]));
+    let target_line = level(since, now, target);
+    let color = theme::trend(moved);
+    let shade = match color {
+        UP => theme::UP_SHADE,
+        DOWN => theme::DOWN_SHADE,
+        _ => FAINT,
+    };
+    let datasets = vec![
+        Dataset::default()
+            .marker(Marker::Braille)
+            .graph_type(GraphType::Area)
+            .fill_to_y(y[0])
+            .style(Style::new().fg(shade))
+            .data(&series),
+        Dataset::default()
+            .name(Line::from(Span::styled(
+                format!("TARGET {}", format::money(target)),
+                Style::new().fg(GOLD),
+            )))
+            .marker(Marker::Dot)
+            .graph_type(GraphType::Scatter)
+            .style(Style::new().fg(GOLD))
+            .data(&target_line),
+        Dataset::default()
+            .marker(Marker::Braille)
+            .graph_type(GraphType::Line)
+            .style(Style::new().fg(color))
+            .data(&series),
+        Dataset::default()
+            .name(Line::from(Span::styled(
+                format!("BUY {}", buys.len()),
+                Style::new().fg(UP),
+            )))
+            .marker(Marker::Block)
+            .graph_type(GraphType::Scatter)
+            .style(Style::new().fg(UP))
+            .data(&buys),
+        Dataset::default()
+            .name(Line::from(Span::styled(
+                format!("SELL {}", sells.len()),
+                Style::new().fg(DOWN),
+            )))
+            .marker(Marker::Block)
+            .graph_type(GraphType::Scatter)
+            .style(Style::new().fg(DOWN))
+            .data(&sells),
+    ];
+    let block = block_with(
+        app,
+        name,
+        vec![
+            Span::styled(format!("{} ", format::money(current)), theme::bold(color)),
+            Span::styled(
+                format!("{} in range", format::signed(moved)),
+                Style::new().fg(color),
+            ),
+        ],
+    );
+    let chart = ratatui::widgets::Chart::new(datasets)
+        .block(block)
+        .x_axis(time_axis(since, now))
+        .y_axis(value_axis(y, format::money))
+        .legend_position(Some(LegendPosition::TopLeft))
+        .hidden_legend_constraints((
+            ratatui::layout::Constraint::Percentage(90),
+            ratatui::layout::Constraint::Percentage(90),
+        ));
     frame.render_widget(chart, area);
 }
 

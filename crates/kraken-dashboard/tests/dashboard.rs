@@ -182,7 +182,15 @@ fn write(path: &Path) -> Storage {
         txid: txid.map(Into::into),
         error: error.map(Into::into),
     };
-    // 60 of budget, 20 in the account no manager uses
+    // a tick before, then 60 of budget, 20 in the account no manager uses
+    storage
+        .record_account(&AccountRecord {
+            at: now - 600_000,
+            quote: "ZUSD".into(),
+            cash: d("57.23"),
+            holdings: d("22.00"),
+        })
+        .unwrap();
     storage
         .record_account(&AccountRecord {
             at: now - 300_000,
@@ -267,6 +275,13 @@ fn reads_what_the_bot_wrote() {
     let filled = model.data.orders.iter().find(|it| it.txid == "O1").unwrap();
     assert_eq!(model.to_fill(filled), None);
 
+    // the whole account over the range: its name as the pairs say it, the oldest point first
+    let series = model.account_series("USD");
+    assert_eq!(series.len(), 2);
+    assert!((series[0].1 - 79.23).abs() < 1e-9, "{series:?}");
+    assert!((series[1].1 - 80.06).abs() < 1e-9, "{series:?}");
+    assert_eq!(model.manager_series(2).len(), 2);
+
     // sold at its target: the position of manager 2 + 1.5%, fees included
     let second = model.manager(2).unwrap();
     assert_eq!(second.position_cost, d("22.2888"));
@@ -327,6 +342,10 @@ fn draws_the_desk() {
         app.chart = chart;
         screen(&app, 180, 48);
     }
+    app.chart = Chart::Portfolio;
+    let portfolio = screen(&app, 180, 48);
+    assert!(portfolio.contains("PORTFOLIO · USD"), "{portfolio}");
+    assert!(portfolio.contains("TARGET"), "{portfolio}");
     app.on_key(KeyEvent::from(KeyCode::Enter));
     assert_eq!(app.focus().map(|it| it.id), Some(1));
     // a manager alone: what it's worth, not the account
@@ -429,7 +448,7 @@ fn refuses_what_isnt_a_database_of_the_bot() {
 fn demo() {
     let path = PathBuf::from(std::env::var("DASHBOARD_DEMO").unwrap());
     let (mut app, _database) = app(&path);
-    for chart in [Chart::Pnl, Chart::Price, Chart::Trades] {
+    for chart in [Chart::Pnl, Chart::Portfolio, Chart::Price, Chart::Trades] {
         app.chart = chart;
         println!("{}", screen(&app, 200, 52));
     }

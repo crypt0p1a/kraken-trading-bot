@@ -30,6 +30,8 @@ impl Panel {
 pub enum Chart {
     /// The P&L over time
     Pnl,
+    /// What the whole account is worth over time, with its target and the orders filled
+    Portfolio,
     /// The price of the pair, with the entry price and the open orders
     Price,
     /// The P&L of each sell
@@ -39,7 +41,8 @@ pub enum Chart {
 impl Chart {
     fn next(self) -> Self {
         match self {
-            Self::Pnl => Self::Price,
+            Self::Pnl => Self::Portfolio,
+            Self::Portfolio => Self::Price,
             Self::Price => Self::Trades,
             Self::Trades => Self::Pnl,
         }

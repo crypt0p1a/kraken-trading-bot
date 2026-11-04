@@ -199,6 +199,16 @@ impl Account {
     }
 }
 
+/// What the whole account was worth in a quote currency at a tick
+#[derive(Debug, Clone, PartialEq)]
+pub struct AccountPoint {
+    /// Kraken name of the asset, e.g. "ZEUR"
+    pub quote: String,
+    /// UTC milliseconds
+    pub at: i64,
+    pub value: f64,
+}
+
 /// Everything shown, read at once
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Data {
@@ -212,6 +222,8 @@ pub struct Data {
     pub markets: Vec<Market>,
     /// The last value of the account per quote; empty for the databases older than it
     pub accounts: Vec<Account>,
+    /// The range only, one point per bucket and quote, oldest first
+    pub account_series: Vec<AccountPoint>,
     /// Whether the last order was only validated by Kraken (dry run), None before any order
     pub dry_run: Option<bool>,
     /// The state of the tick asked for from here: "idle", "refresh" (asked for), "pending" (under
@@ -317,6 +329,7 @@ impl Database {
             forced_tick: self.forced_tick().map_err(sql)?,
             markets: self.markets(start, bucket).map_err(sql)?,
             accounts: self.accounts().map_err(sql)?,
+            account_series: self.account_series(start, bucket).map_err(sql)?,
             version: self.version,
             since: start,
         };
@@ -376,6 +389,25 @@ impl Database {
                 at: row.get(1)?,
                 cash: decimal(row, 2)?,
                 holdings: decimal(row, 3)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    fn account_series(&self, since: i64, bucket: i64) -> rusqlite::Result<Vec<AccountPoint>> {
+        if !self.tables.contains("account_snapshots") {
+            return Ok(Vec::new());
+        }
+        // the bare columns of SQLite: the amounts come from the row of MAX(at)
+        let mut statement = self.connection.prepare_cached(
+            "SELECT quote, MAX(at), CAST(cash AS REAL) + CAST(holdings AS REAL)
+             FROM account_snapshots WHERE at >= ?1 GROUP BY quote, at / ?2 ORDER BY 2",
+        )?;
+        let rows = statement.query_map(params![since, bucket], |row| {
+            Ok(AccountPoint {
+                quote: row.get(0)?,
+                at: row.get(1)?,
+                value: row.get(2)?,
             })
         })?;
         rows.collect()

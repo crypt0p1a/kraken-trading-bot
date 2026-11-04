@@ -150,6 +150,13 @@ pub struct Totals {
 }
 
 impl Totals {
+    /// What the managers and the account are worth now, then once every open buy filled and every
+    /// position sold at its target. The rest of the account stays as it is
+    pub fn current_and_target(&self, account: Option<&Account>) -> (Decimal, Decimal) {
+        let current = account.map_or(self.value, Account::value);
+        (current, current - self.value + self.target)
+    }
+
     pub fn pnl(&self) -> Decimal {
         self.value - self.budget
     }
@@ -286,6 +293,26 @@ impl Model {
             .map(to_f64)
             .filter(|it| *it > 0.0)?;
         Some((limit - last) / last * 100.0)
+    }
+
+    /// What the whole account was worth in the quote ("EUR") over the range, oldest first
+    pub fn account_series(&self, quote: &str) -> Vec<(f64, f64)> {
+        self.data
+            .account_series
+            .iter()
+            .filter(|it| asset(&it.quote) == quote)
+            .map(|it| (it.at as f64, it.value))
+            .collect()
+    }
+
+    /// What the manager was worth over the range, oldest first
+    pub fn manager_series(&self, id: i32) -> Vec<(f64, f64)> {
+        self.data
+            .snapshots
+            .iter()
+            .filter(|it| it.manager_id == id)
+            .map(|it| (it.at as f64, it.value))
+            .collect()
     }
 
     /// The last value of the whole account in the quote ("EUR"), if the bot records it

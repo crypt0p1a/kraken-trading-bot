@@ -334,8 +334,7 @@ fn render_tiles(frame: &mut Frame, app: &App, area: Rect) {
         Line::from(detail),
     );
     // every open buy filled, every position sold at its target: what the account would be worth
-    let current = account.map_or(totals.value, |it| it.value());
-    let target = current - totals.value + totals.target;
+    let (current, target) = totals.current_and_target(account);
     let gain = to_f64(target - current);
     tile(
         frame,
@@ -506,7 +505,7 @@ fn render_help(frame: &mut Frame, area: Rect) {
         ("esc", "back to all the managers"),
         (
             "c",
-            "chart: P&L over time, price with the orders, P&L of each sell",
+            "chart: P&L over time, portfolio, price with the orders, P&L of each sell",
         ),
         ("1 … 5", "range of the charts: 1H 24H 7D 30D ALL"),
         ("o", "only the open orders"),

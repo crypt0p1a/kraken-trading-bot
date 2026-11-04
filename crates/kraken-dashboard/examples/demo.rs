@@ -12,10 +12,11 @@ use kraken_trading_bot::ledger;
 use kraken_trading_bot::market::Indicators;
 use kraken_trading_bot::order::BotOrder;
 use kraken_trading_bot::storage::{
-    ActionRecord, ManagerState, Storage, TickerRecord, VirtualManager,
+    AccountRecord, ActionRecord, ManagerState, Storage, TickerRecord, VirtualManager,
 };
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive, ToPrimitive};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 const TICK: i64 = 5 * 60_000;
@@ -394,6 +395,32 @@ fn main() {
             }
             manager.orders.push(order);
             record(kind, Some(volume), Some(limit), reason, Some(txid), None);
+        }
+
+        // the whole account: the managers, and 20 of each quote no manager uses
+        let mut accounts: BTreeMap<String, (Decimal, Decimal)> = BTreeMap::new();
+        for manager in &managers {
+            let pair = pairs
+                .iter()
+                .find(|it| it.altname == manager.config.pair.replace('/', ""))
+                .unwrap();
+            let balances = ledger::compute(manager.config.budget, &manager.orders);
+            let account = accounts
+                .entry(kraken_dashboard::stats::split(pair.altname).1)
+                .or_insert((Decimal::from(20), Decimal::ZERO));
+            account.0 += balances.quote_available + balances.quote_in_buy_order;
+            account.1 += (balances.base_available + balances.base_in_sell_order)
+                * decimal(pair.price, pair.decimals);
+        }
+        for (quote, (cash, holdings)) in accounts {
+            storage
+                .record_account(&AccountRecord {
+                    at,
+                    quote,
+                    cash,
+                    holdings,
+                })
+                .unwrap();
         }
     }
 
