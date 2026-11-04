@@ -4,7 +4,7 @@
 //! ```text
 //! ◆ KRAKEN  TRADING DESK  ● LIVE                      TICK 42s AGO │ UTC 2026-11-03 14:32:07
 //!  XBTUSD 76,567.1 ▲ +1.23%  ◆  ETHUSD 2,233.67 ▼ -0.45%  ◆  …
-//! ┌PORTF.──┐┌TARGET──┐┌P&L─────┐┌REALIZED┐┌UNREAL.─┐┌WIN RATE┐┌FEES────┐┌ORDERS──┐
+//! ┌PORTF.──┐┌TARGET┐┌P&L───┐┌REALIZ┐┌UNREAL┐┌1 MON.┐┌3 MON.┐┌1 YEAR┐┌FEES──┐┌ORDERS┐
 //! ┌MANAGERS───────────────────────────────────┐┌PORTFOLIO · USD · 24H───┐
 //! │                                           ││                        │
 //! ┌ORDERS──────────────────┐┌MARKETS───────────┐┌IF THE MARKET MOVES─────┐
@@ -279,7 +279,10 @@ fn render_tiles(frame: &mut Frame, app: &App, area: Rect) {
     let pnl = to_f64(totals.pnl());
     let realized = to_f64(totals.realized);
     let unrealized = to_f64(totals.unrealized());
-    let areas: [Rect; 8] = Layout::horizontal([Constraint::Fill(1); 8]).areas(area);
+    // the first tile says the most
+    let mut widths = [Constraint::Fill(2); 10];
+    widths[0] = Constraint::Fill(3);
+    let areas: [Rect; 10] = Layout::horizontal(widths).areas(area);
 
     // the whole account, managers or not, when the bot records it
     let account = app
@@ -397,27 +400,36 @@ fn render_tiles(frame: &mut Frame, app: &App, area: Rect) {
             theme::dim(),
         )),
     );
-    let losses = totals.trades - totals.wins;
-    tile(
-        frame,
-        areas[5],
-        "WIN RATE",
-        match totals.win_rate() {
-            Some(rate) => Span::styled(
-                format!("{rate:.1}%"),
-                theme::bold(if rate >= 50.0 { UP } else { DOWN }),
+    // what the sells earned per day since the first order, carried on as it is
+    let ids = app.charted();
+    let per_day = app.model.realized_per_day(&ids, app.loaded_at);
+    for (place, name, days) in [
+        (5, "1 MONTH", 30.0),
+        (6, "3 MONTHS", 90.0),
+        (7, "1 YEAR", 365.0),
+    ] {
+        let projected = per_day * days;
+        tile(
+            frame,
+            areas[place],
+            name,
+            Span::styled(
+                format::signed(projected),
+                theme::bold(theme::trend(projected)),
             ),
-            None => Span::styled("—", theme::dim()),
-        },
-        Line::from(vec![
-            Span::styled(format!("{}W", totals.wins), Style::new().fg(UP)),
-            Span::styled(" / ", theme::faint()),
-            Span::styled(format!("{losses}L"), Style::new().fg(DOWN)),
-        ]),
-    );
+            Line::from(Span::styled(
+                format!(
+                    "{} {}",
+                    theme::arrow(projected),
+                    format::percent(projected / to_f64(totals.budget).max(1.0) * 100.0)
+                ),
+                Style::new().fg(theme::trend(projected)),
+            )),
+        );
+    }
     tile(
         frame,
-        areas[6],
+        areas[8],
         "FEES",
         Span::styled(format::money(to_f64(totals.fees)), theme::bold(GOLD)),
         Line::from(Span::styled(
@@ -427,7 +439,7 @@ fn render_tiles(frame: &mut Frame, app: &App, area: Rect) {
     );
     tile(
         frame,
-        areas[7],
+        areas[9],
         "OPEN ORDERS",
         Span::styled(totals.open_orders.to_string(), theme::bold(theme::CYAN)),
         Line::from(Span::styled(

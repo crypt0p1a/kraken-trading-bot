@@ -145,6 +145,12 @@ pub struct Scenario {
     pub sells: usize,
 }
 
+/// An amount earned from a time until another (UTC milliseconds), per day. A first day counts as a
+/// whole one: what a first hour earned isn't 24 times that
+fn per_day(earned: f64, since: f64, now: f64) -> f64 {
+    earned / ((now - since) / 86_400_000.0).max(1.0)
+}
+
 /// The managers of a quote currency, together
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Totals {
@@ -187,10 +193,6 @@ impl Totals {
 
     pub fn exposure_percent(&self) -> f64 {
         percent(self.exposure, self.value)
-    }
-
-    pub fn win_rate(&self) -> Option<f64> {
-        (self.trades > 0).then(|| self.wins as f64 * 100.0 / self.trades as f64)
     }
 }
 
@@ -308,6 +310,22 @@ impl Model {
             .map(to_f64)
             .filter(|it| *it > 0.0)?;
         Some((limit - last) / last * 100.0)
+    }
+
+    /// What the sells of these managers earned per day, since their first order
+    pub fn realized_per_day(&self, ids: &[i32], now: i64) -> f64 {
+        let first = self
+            .data
+            .orders
+            .iter()
+            .filter(|it| ids.contains(&it.manager_id))
+            .map(|it| it.open_time)
+            .fold(f64::MAX, f64::min);
+        per_day(
+            to_f64(self.totals_of(ids).realized),
+            first * 1000.0,
+            now as f64,
+        )
     }
 
     /// The portfolio of these managers, and of the account when given, for each move of the market.
@@ -473,6 +491,15 @@ pub fn pnl_series(snapshots: &[&Snapshot], budgets: &HashMap<i32, f64>) -> Vec<(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn says_what_was_earned_per_day() {
+        const DAY: f64 = 86_400_000.0;
+        assert_eq!(per_day(6.0, 0.0, 2.0 * DAY), 3.0);
+        // a first hour counts as a whole day, no order counts for nothing
+        assert_eq!(per_day(6.0, 0.0, DAY / 24.0), 6.0);
+        assert_eq!(per_day(0.0, f64::MAX, DAY), 0.0);
+    }
 
     #[test]
     fn names_the_assets_as_the_pairs() {
