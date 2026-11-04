@@ -320,7 +320,6 @@ fn draws_the_desk() {
         "#1",
         "FILLED",
         "OPEN",
-        "EOrder:Insufficient funds",
         "WIN RATE",
         "100.0%",
         "PORTFOLIO",
@@ -336,18 +335,21 @@ fn draws_the_desk() {
     // the price of an open order lined up, whole, in the managers
     let wide = screen(&app, 200, 52);
     assert!(wide.contains("BUY  75,500.0"), "{wide}");
+    // the reason of a refused order, whole, before its amount
+    assert!(wide.contains("✗ EOrder:Insufficient funds"), "{wide}");
+    assert!(text.contains("✗ EOrder:Insufficient"), "{text}");
 
     // every chart, the focus on a manager, the help: drawn without a panic
     for chart in [Chart::Price, Chart::Trades, Chart::Pnl] {
-        app.chart = chart;
+        app.charts[0] = chart;
         screen(&app, 180, 48);
     }
-    app.chart = Chart::Scenarios;
+    app.charts[0] = Chart::Scenarios;
     let scenarios = screen(&app, 180, 48);
     assert!(scenarios.contains("IF THE MARKET MOVES"), "{scenarios}");
     assert!(scenarios.contains("NOW"), "{scenarios}");
     assert!(scenarios.contains("-10%"), "{scenarios}");
-    app.chart = Chart::Portfolio;
+    app.charts[0] = Chart::Portfolio;
     let portfolio = screen(&app, 180, 48);
     assert!(portfolio.contains("PORTFOLIO · USD"), "{portfolio}");
     assert!(portfolio.contains("▲ 2 BUYS"), "{portfolio}");
@@ -476,30 +478,36 @@ fn a_move_up_sells_at_the_target_and_moves_what_no_manager_owns() {
 }
 
 #[test]
-fn always_shows_two_different_charts() {
-    let fixture = path("two-charts");
+fn shows_a_column_of_different_charts() {
+    let fixture = path("column");
     let _storage = write(&fixture.path);
     let (mut app, _database) = app(&fixture.path);
 
     let text = screen(&app, 180, 48);
     assert!(text.contains("PORTFOLIO · USD"), "{text}");
     assert!(text.contains("IF THE MARKET MOVES · USD"), "{text}");
+    assert!(text.contains("XBTUSD · #1"), "{text}");
 
-    // each key its own chart, never the one of the other: back at the start in 4 presses
-    let (chart, second) = (app.chart, app.second_chart);
-    for key in ['c', 'v'] {
-        for _ in 0..4 {
+    // each key its own place, never a chart of another: back at the start in 3 presses
+    let charts = app.charts;
+    for key in ['c', 'v', 'b'] {
+        for _ in 0..3 {
             app.on_key(KeyEvent::from(KeyCode::Char(key)));
-            assert_ne!(app.chart, app.second_chart);
+            let [first, second, third] = app.charts;
+            assert!(first != second && first != third && second != third);
             screen(&app, 180, 48);
         }
-        assert_eq!((app.chart, app.second_chart), (chart, second));
+        assert_eq!(app.charts, charts);
     }
 
-    // too low for two: the first one alone
-    let low = screen(&app, 140, 30);
+    // lower: fewer charts, the first ones
+    let low = screen(&app, 180, 36);
     assert!(low.contains("PORTFOLIO · USD"), "{low}");
-    assert!(!low.contains("IF THE MARKET MOVES · USD"), "{low}");
+    assert!(low.contains("IF THE MARKET MOVES · USD"), "{low}");
+    assert!(!low.contains("XBTUSD · #1"), "{low}");
+    let lower = screen(&app, 140, 28);
+    assert!(lower.contains("PORTFOLIO · USD"), "{lower}");
+    assert!(!lower.contains("IF THE MARKET MOVES · USD"), "{lower}");
 }
 
 #[test]
@@ -507,8 +515,7 @@ fn the_charts_dont_move_between_two_frames() {
     let fixture = path("still");
     let _storage = write(&fixture.path);
     let (mut app, _database) = app(&fixture.path);
-    app.chart = Chart::Portfolio;
-    app.second_chart = Chart::Price;
+    app.charts = [Chart::Portfolio, Chart::Price, Chart::Trades];
     // without the header and the prices scrolling
     let charts = |app: &App| {
         screen(app, 180, 48)
@@ -622,7 +629,7 @@ fn demo() {
         Chart::Trades,
         Chart::Scenarios,
     ] {
-        app.chart = chart;
+        app.charts[0] = chart;
         println!("{}", screen(&app, 200, 52));
     }
 }

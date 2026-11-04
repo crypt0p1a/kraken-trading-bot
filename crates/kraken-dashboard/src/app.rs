@@ -103,10 +103,8 @@ pub struct App {
     /// Only the manager of the cursor, instead of all of them
     pub drilled: bool,
     pub panel: Panel,
-    /// The chart above
-    pub chart: Chart,
-    /// The chart below
-    pub second_chart: Chart,
+    /// The charts of the column, from the top
+    pub charts: [Chart; 3],
     pub range: Range,
     pub orders_row: usize,
     pub tape_row: usize,
@@ -132,8 +130,7 @@ impl App {
             cursor: 0,
             drilled: false,
             panel: Panel::Managers,
-            chart: Chart::Portfolio,
-            second_chart: Chart::Scenarios,
+            charts: [Chart::Portfolio, Chart::Scenarios, Chart::Price],
             range: Range::Day,
             orders_row: 0,
             tape_row: 0,
@@ -275,19 +272,9 @@ impl App {
                 self.orders_row = 0;
                 self.tape_row = 0;
             }
-            KeyCode::Char('c') => {
-                self.chart = self.chart.next();
-                // never the same chart twice
-                if self.chart == self.second_chart {
-                    self.chart = self.chart.next();
-                }
-            }
-            KeyCode::Char('v') => {
-                self.second_chart = self.second_chart.next();
-                if self.second_chart == self.chart {
-                    self.second_chart = self.second_chart.next();
-                }
-            }
+            KeyCode::Char('c') => self.next_chart(0),
+            KeyCode::Char('v') => self.next_chart(1),
+            KeyCode::Char('b') => self.next_chart(2),
             KeyCode::Char('i') => {
                 self.show_idle = !self.show_idle;
                 self.tape_row = 0;
@@ -305,6 +292,15 @@ impl App {
             _ => {}
         }
         reload
+    }
+
+    /// The next chart at this place, never one shown at another
+    fn next_chart(&mut self, place: usize) {
+        let mut chart = self.charts[place].next();
+        while self.charts.contains(&chart) {
+            chart = chart.next();
+        }
+        self.charts[place] = chart;
     }
 
     fn scroll(&mut self, by: i64) {

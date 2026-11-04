@@ -16,6 +16,16 @@ fn right<'a>(text: impl Into<String>, style: Style) -> Cell<'a> {
     Cell::from(Line::from(Span::styled(text.into(), style)).right_aligned())
 }
 
+/// Without the columns at these indexes: what a narrow table leaves out
+fn without<T>(columns: Vec<T>, hidden: &[usize]) -> Vec<T> {
+    columns
+        .into_iter()
+        .enumerate()
+        .filter(|(index, _)| !hidden.contains(index))
+        .map(|(_, it)| it)
+        .collect()
+}
+
 fn left<'a>(text: impl Into<String>, style: Style) -> Cell<'a> {
     Cell::from(Span::styled(text.into(), style))
 }
@@ -87,7 +97,8 @@ pub fn render_managers(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    let spark = 10;
+    // the trend takes what the other columns leave, the open order 15 wide
+    let spark = area.width.saturating_sub(113).clamp(6, 40) as usize;
     let rows: Vec<Row> = model
         .data
         .managers
@@ -302,6 +313,12 @@ pub fn render_orders(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
+    // narrow: the bar of the fill goes first, then the cost and the fee, then the volume
+    let (hidden, bar): (&[usize], usize) = match area.width {
+        105.. => (&[], 6),
+        84.. => (&[8, 9], 0),
+        _ => (&[6, 8, 9], 0),
+    };
     let rows: Vec<Row> = orders
         .iter()
         .map(|order| {
@@ -321,7 +338,7 @@ pub fn render_orders(frame: &mut Frame, app: &App, area: Rect) {
                 other => Span::styled(other.to_uppercase(), theme::dim()),
             };
             let dead = order.is_final && order.volume_executed.is_zero();
-            let row = Row::new(vec![
+            let cells = vec![
                 left(
                     format::stamp((order.open_time * 1000.0) as i64),
                     theme::dim(),
@@ -337,7 +354,7 @@ pub fn render_orders(frame: &mut Frame, app: &App, area: Rect) {
                     None => right("—", theme::faint()),
                 },
                 right(format::volume(to_f64(order.volume)), theme::text()),
-                Cell::from(fill_bar(order, 6)),
+                Cell::from(fill_bar(order, bar)),
                 if order.volume_executed.is_zero() {
                     right("—", theme::faint())
                 } else {
@@ -349,7 +366,8 @@ pub fn render_orders(frame: &mut Frame, app: &App, area: Rect) {
                     right(format::money(to_f64(order.fee)), Style::new().fg(GOLD))
                 },
                 Cell::from(status),
-            ]);
+            ];
+            let row = Row::new(without(cells, hidden));
             if dead {
                 row.style(Style::new().fg(FAINT))
             } else {
@@ -358,32 +376,39 @@ pub fn render_orders(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
-    let widths = [
-        Constraint::Length(11),
-        Constraint::Length(8),
-        Constraint::Length(4),
-        Constraint::Length(7),
-        Constraint::Length(10),
-        Constraint::Length(8),
-        Constraint::Length(10),
-        Constraint::Length(11),
-        Constraint::Length(8),
-        Constraint::Length(6),
-        Constraint::Fill(1),
-    ];
-    let header = header(&[
-        ("  OPENED", false),
-        ("MGR", false),
-        ("SIDE", false),
-        ("PAIR", false),
-        ("PRICE", true),
-        ("TO FILL", true),
-        ("VOLUME", true),
-        ("FILLED", false),
-        ("COST", true),
-        ("FEE", true),
-        ("STATUS", false),
-    ]);
+    let widths = without(
+        vec![
+            Constraint::Length(11),
+            Constraint::Length(8),
+            Constraint::Length(4),
+            Constraint::Length(7),
+            Constraint::Length(9),
+            Constraint::Length(7),
+            Constraint::Length(10),
+            Constraint::Length((bar as u16 + 5).max(6)),
+            Constraint::Length(8),
+            Constraint::Length(6),
+            Constraint::Fill(1),
+        ],
+        hidden,
+    );
+    let names = without(
+        vec![
+            ("  OPENED", false),
+            ("MGR", false),
+            ("SIDE", false),
+            ("PAIR", false),
+            ("PRICE", true),
+            ("TO FILL", true),
+            ("VOLUME", true),
+            ("FILLED", false),
+            ("COST", true),
+            ("FEE", true),
+            ("STATUS", false),
+        ],
+        hidden,
+    );
+    let header = header(&names);
     let mut state = TableState::new().with_selected(Some(app.orders_row.min(orders.len() - 1)));
     frame.render_stateful_widget(
         table(rows, &widths, header, focused).block(block),
@@ -393,6 +418,8 @@ pub fn render_orders(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 pub fn render_markets(frame: &mut Frame, app: &App, area: Rect) {
+    // narrow: without the range and the spread
+    let hidden: &[usize] = if area.width < 62 { &[4, 5] } else { &[] };
     let markets = &app.model.data.markets;
     let block = panel(
         title("MARKETS", [Span::styled("· 24H", theme::dim())]),
@@ -444,15 +471,18 @@ pub fn render_markets(frame: &mut Frame, app: &App, area: Rect) {
                 ),
             };
             let pair = canonical(&market.key);
-            let row = Row::new(vec![
-                left(pair, theme::bold(AMBER)),
-                right(format::price(last), theme::bold(TEXT)),
-                change,
-                atr,
-                range,
-                right(format!("{spread:.1}"), theme::dim()),
-                trend,
-            ]);
+            let row = Row::new(without(
+                vec![
+                    left(pair, theme::bold(AMBER)),
+                    right(format::price(last), theme::bold(TEXT)),
+                    change,
+                    atr,
+                    range,
+                    right(format!("{spread:.1}"), theme::dim()),
+                    trend,
+                ],
+                hidden,
+            ));
             if Some(index) == selected {
                 row.style(Style::new().bg(theme::SELECTED))
             } else {
@@ -461,24 +491,31 @@ pub fn render_markets(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
-    let widths = [
-        Constraint::Length(8),
-        Constraint::Length(10),
-        Constraint::Length(10),
-        Constraint::Length(6),
-        Constraint::Length(7),
-        Constraint::Length(6),
-        Constraint::Fill(1),
-    ];
-    let header = header(&[
-        ("PAIR", false),
-        ("LAST", true),
-        ("24H", true),
-        ("ATR", true),
-        ("RANGE", true),
-        ("BPS", true),
-        ("TREND", false),
-    ]);
+    let widths = without(
+        vec![
+            Constraint::Length(8),
+            Constraint::Length(10),
+            Constraint::Length(10),
+            Constraint::Length(6),
+            Constraint::Length(7),
+            Constraint::Length(6),
+            Constraint::Fill(1),
+        ],
+        hidden,
+    );
+    let names = without(
+        vec![
+            ("PAIR", false),
+            ("LAST", true),
+            ("24H", true),
+            ("ATR", true),
+            ("RANGE", true),
+            ("BPS", true),
+            ("TREND", false),
+        ],
+        hidden,
+    );
+    let header = header(&names);
     frame.render_widget(
         Table::new(rows, widths)
             .header(header)
@@ -500,13 +537,18 @@ fn describe(action: &Action) -> (Span<'static>, Line<'static>) {
     match action.kind.as_str() {
         kind @ ("buy" | "sell") => {
             let color = if kind == "buy" { UP } else { DOWN };
-            let mut spans = vec![Span::styled(amount_at_price(), theme::text())];
+            // what went wrong first: a narrow tape cuts the end of the line
+            let mut spans = Vec::new();
             if let Some(error) = &action.error {
-                spans.push(Span::styled(format!("  ✗ {error}"), theme::bold(DOWN)));
-            } else if action.dry_run {
-                spans.push(Span::styled("  DRY", theme::bold(GOLD)));
-            } else if let Some(txid) = &action.txid {
-                spans.push(Span::styled(format!("  ✓ {txid}"), Style::new().fg(UP)));
+                spans.push(Span::styled(format!("✗ {error}  "), theme::bold(DOWN)));
+            }
+            spans.push(Span::styled(amount_at_price(), theme::text()));
+            if action.error.is_none() {
+                if action.dry_run {
+                    spans.push(Span::styled("  DRY", theme::bold(GOLD)));
+                } else if let Some(txid) = &action.txid {
+                    spans.push(Span::styled(format!("  ✓ {txid}"), Style::new().fg(UP)));
+                }
             }
             (
                 Span::styled(kind.to_uppercase(), theme::bold(color)),
@@ -515,13 +557,16 @@ fn describe(action: &Action) -> (Span<'static>, Line<'static>) {
         }
         "buy_cancelled" => (
             Span::styled("TRAIL", theme::bold(VIOLET)),
-            Line::from(vec![
-                Span::styled("buy cancelled, placed again higher ", theme::text()),
-                match &action.error {
-                    Some(error) => Span::styled(format!("✗ {error}"), theme::bold(DOWN)),
-                    None => Span::styled(reason(), theme::dim()),
-                },
-            ]),
+            match &action.error {
+                Some(error) => Line::from(vec![
+                    Span::styled(format!("✗ {error}  "), theme::bold(DOWN)),
+                    Span::styled("buy not cancelled", theme::text()),
+                ]),
+                None => Line::from(vec![
+                    Span::styled("buy cancelled, placed again higher ", theme::text()),
+                    Span::styled(reason(), theme::dim()),
+                ]),
+            },
         ),
         "virtual_created" => (
             Span::styled("+VIRT", theme::bold(VIOLET)),
@@ -566,12 +611,21 @@ pub fn render_tape(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
+    // narrow: the time without the date leaves room for what happened
+    let narrow = area.width < 60;
     let rows: Vec<Row> = actions
         .iter()
         .map(|action| {
             let (kind, detail) = describe(action);
             Row::new(vec![
-                left(format::stamp(action.at), theme::dim()),
+                left(
+                    if narrow {
+                        format::clock(action.at)[..5].to_string()
+                    } else {
+                        format::stamp(action.at)
+                    },
+                    theme::dim(),
+                ),
                 left(format!("#{}", action.manager_id), theme::text()),
                 Cell::from(kind),
                 Cell::from(detail),
@@ -579,7 +633,7 @@ pub fn render_tape(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
     let widths = [
-        Constraint::Length(11),
+        Constraint::Length(if narrow { 5 } else { 11 }),
         Constraint::Length(8),
         Constraint::Length(5),
         Constraint::Fill(1),

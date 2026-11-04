@@ -5,9 +5,10 @@
 //! ◆ KRAKEN  TRADING DESK  ● LIVE                      TICK 42s AGO │ UTC 2026-11-03 14:32:07
 //!  XBTUSD 76,567.1 ▲ +1.23%  ◆  ETHUSD 2,233.67 ▼ -0.45%  ◆  …
 //! ┌PORTF.──┐┌TARGET──┐┌P&L─────┐┌REALIZED┐┌UNREAL.─┐┌WIN RATE┐┌FEES────┐┌ORDERS──┐
-//! ┌MANAGERS──────────────────────────────┐┌P&L · USD · 24H──────────────┐
-//! ┌ORDERS────────────────────────────────┐┌MARKETS──────────────────────┐
-//!                                         ┌TAPE─────────────────────────┐
+//! ┌MANAGERS───────────────────────────────────┐┌PORTFOLIO · USD · 24H───┐
+//! │                                           ││                        │
+//! ┌ORDERS──────────────────┐┌MARKETS───────────┐┌IF THE MARKET MOVES─────┐
+//! │                        │┌TAPE──────────────┐┌XBTUSD · #1─────────────┐
 //!  q QUIT  tab PANEL  ↑↓ MOVE  ⏎ FOCUS  c CHART  1-5 RANGE …
 //! ```
 
@@ -53,12 +54,11 @@ pub fn render(frame: &mut Frame, app: &App) {
         return;
     }
 
-    let [header, tape, tiles, middle, bottom, footer] = Layout::vertical([
+    let [header, tape, tiles, body, footer] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(4),
-        Constraint::Fill(5),
-        Constraint::Fill(4),
+        Constraint::Fill(1),
         Constraint::Length(1),
     ])
     .areas(area);
@@ -67,14 +67,18 @@ pub fn render(frame: &mut Frame, app: &App) {
     render_ticker_tape(frame, app, tape);
     render_tiles(frame, app, tiles);
 
-    let [managers, chart] =
-        Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)]).areas(middle);
+    // the tables on two thirds, the charts in a column on the last one
+    let [tables, chart_column] =
+        Layout::horizontal([Constraint::Percentage(67), Constraint::Percentage(33)]).areas(body);
+    charts::render(frame, app, chart_column);
+
+    let [managers, bottom] =
+        Layout::vertical([Constraint::Fill(5), Constraint::Fill(4)]).areas(tables);
     panels::render_managers(frame, app, managers);
-    charts::render(frame, app, chart);
 
     let markets = app.model.data.markets.len().max(1) as u16 + 3;
     let [orders, right] =
-        Layout::horizontal([Constraint::Percentage(57), Constraint::Percentage(43)]).areas(bottom);
+        Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)]).areas(bottom);
     let [market, actions] =
         Layout::vertical([Constraint::Length(markets), Constraint::Fill(1)]).areas(right);
     panels::render_orders(frame, app, orders);
@@ -463,8 +467,7 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         key("tab", "PANEL"),
         key("↑↓", "MOVE"),
         key("⏎", if app.drilled { "ALL" } else { "FOCUS" }),
-        key("c", "CHART"),
-        key("v", "CHART 2"),
+        key("c v b", "CHARTS"),
         key("o", if app.open_only { "ALL ORDERS" } else { "OPEN" }),
         key("i", if app.show_idle { "HIDE IDLE" } else { "IDLE" }),
         key("r", "RELOAD"),
@@ -505,10 +508,9 @@ fn render_help(frame: &mut Frame, area: Rect) {
         ),
         ("esc", "back to all the managers"),
         (
-            "c",
-            "chart above: P&L, portfolio, price with the orders, sells, if the market moves",
+            "c v b",
+            "the chart at the top, in the middle, at the bottom: P&L, portfolio, price, sells, if the market moves",
         ),
-        ("v", "chart below, the same ones"),
         ("1 … 5", "range of the charts: 1H 24H 7D 30D ALL"),
         ("o", "only the open orders"),
         ("i", "the idle decisions in the tape"),
