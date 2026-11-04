@@ -318,6 +318,10 @@ fn draws_the_desk() {
         assert!(text.contains(expected), "no {expected} in\n{text}");
     }
 
+    // the price of an open order lined up, whole, in the managers
+    let wide = screen(&app, 200, 52);
+    assert!(wide.contains("BUY  75,500.0"), "{wide}");
+
     // every chart, the focus on a manager, the help: drawn without a panic
     for chart in [Chart::Price, Chart::Trades, Chart::Pnl] {
         app.chart = chart;

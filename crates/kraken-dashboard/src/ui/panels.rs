@@ -138,11 +138,12 @@ pub fn render_managers(frame: &mut Frame, app: &App, area: Rect) {
             };
             let order = match order {
                 Some(order) => {
-                    let (name, color) = side(order.side);
+                    let (_, color) = side(order.side);
                     let price = order.limit_price.map(to_f64).unwrap_or_default();
+                    let (name, price) = open_order_columns(order.side, price);
                     let mut spans = vec![
-                        Span::styled(format!("{name} "), theme::bold(color)),
-                        Span::styled(format::price(price), theme::text()),
+                        Span::styled(name, theme::bold(color)),
+                        Span::styled(price, theme::text()),
                     ];
                     if order.filled() > 0.0 {
                         spans.push(Span::styled(
@@ -241,6 +242,16 @@ fn side(side: Side) -> (&'static str, ratatui::style::Color) {
         Side::Buy => ("BUY", UP),
         Side::Sell => ("SELL", DOWN),
     }
+}
+
+/// The side and the price of an open order, of a fixed width: from a row to the next, the prices
+/// line up whatever the side and the size of the price
+fn open_order_columns(order_side: Side, price: f64) -> (String, String) {
+    let (name, _) = side(order_side);
+    (
+        format!("{name:<4} "),
+        format!("{:>8}", format::price(price)),
+    )
 }
 
 /// How far the market is from an open order: ▼1.41% for a buy the price has to drop to, in gold
@@ -585,4 +596,19 @@ pub fn render_tape(frame: &mut Frame, app: &App, area: Rect) {
         area,
         &mut state,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lines_up_the_prices_of_the_open_orders() {
+        let buy = open_order_columns(Side::Buy, 68_566.3);
+        let sell = open_order_columns(Side::Sell, 69_641.9);
+        let small = open_order_columns(Side::Buy, 2_021.3);
+        assert_eq!(buy, ("BUY  ".into(), "68,566.3".into()));
+        assert_eq!(sell, ("SELL ".into(), "69,641.9".into()));
+        assert_eq!(small, ("BUY  ".into(), " 2,021.3".into()));
+    }
 }
