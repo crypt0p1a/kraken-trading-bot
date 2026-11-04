@@ -350,6 +350,8 @@ fn draws_the_desk() {
     app.chart = Chart::Portfolio;
     let portfolio = screen(&app, 180, 48);
     assert!(portfolio.contains("PORTFOLIO · USD"), "{portfolio}");
+    assert!(portfolio.contains("▲ 2 BUYS"), "{portfolio}");
+    assert!(portfolio.contains("▼ 1 SELLS +0.16"), "{portfolio}");
     assert!(portfolio.contains("TARGET"), "{portfolio}");
     app.on_key(KeyEvent::from(KeyCode::Enter));
     assert_eq!(app.focus().map(|it| it.id), Some(1));
@@ -498,6 +500,28 @@ fn always_shows_two_different_charts() {
     let low = screen(&app, 140, 30);
     assert!(low.contains("PORTFOLIO · USD"), "{low}");
     assert!(!low.contains("IF THE MARKET MOVES · USD"), "{low}");
+}
+
+#[test]
+fn the_charts_dont_move_between_two_frames() {
+    let fixture = path("still");
+    let _storage = write(&fixture.path);
+    let (mut app, _database) = app(&fixture.path);
+    app.chart = Chart::Portfolio;
+    app.second_chart = Chart::Price;
+    // without the header and the prices scrolling
+    let charts = |app: &App| {
+        screen(app, 180, 48)
+            .lines()
+            .skip(2)
+            .map(String::from)
+            .collect::<Vec<_>>()
+    };
+    let first = charts(&app);
+    for _ in 0..20 {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        assert_eq!(charts(&app), first);
+    }
 }
 
 #[test]

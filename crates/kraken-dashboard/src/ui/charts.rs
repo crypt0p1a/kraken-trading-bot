@@ -2,18 +2,19 @@
 //! orders, the P&L of each sell, the portfolio if the market moves
 
 use super::{panel, title};
-use crate::app::{App, Chart, now_millis};
+use crate::app::{App, Chart};
 use crate::data::{Side, percent, to_f64};
 use crate::format;
 use crate::stats::canonical;
 use crate::theme::{self, AMBER, CYAN, DOWN, FAINT, GOLD, UP};
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
+use ratatui::widgets::canvas::{Canvas, Line as Segment, Points};
 use ratatui::widgets::{
-    Axis, Block, Cell, Dataset, GraphType, LegendPosition, Paragraph, Row, Table,
+    Axis, Block, Borders, Cell, Dataset, GraphType, LegendPosition, Paragraph, Row, Table,
 };
 
 fn tabs(shown: Chart) -> Vec<Span<'static>> {
@@ -78,7 +79,7 @@ fn bounds(values: impl Iterator<Item = f64>) -> [f64; 2] {
 }
 
 fn time_axis(since: i64, now: i64) -> Axis<'static> {
-    let short = now - since <= 24 * 3_600_000;
+    let short = now - since < 24 * 3_600_000;
     let label = |at: i64| {
         Span::styled(
             if short {
@@ -157,7 +158,7 @@ fn render_pnl(frame: &mut Frame, app: &App, area: Rect, shown: Chart) {
         return;
     }
 
-    let now = now_millis();
+    let now = app.loaded_at;
     let since = app.model.data.since.min(series[0].0 as i64);
     let last = series.last().map_or(0.0, |it| it.1);
     let moved = last - series[0].1;
@@ -375,100 +376,270 @@ fn render_portfolio(frame: &mut Frame, app: &App, area: Rect, shown: Chart) {
         return;
     }
 
-    let now = now_millis();
+    let now = app.loaded_at;
     let since = app.model.data.since.min(series[0].0 as i64);
     let (current, target) = totals.current_and_target(account);
     let (current, target) = (to_f64(current), to_f64(target));
     let moved = current - series[0].1;
 
-    // the orders filled in the range, on the curve
-    let mut buys = Vec::new();
-    let mut sells = Vec::new();
-    for order in
-        app.model.data.orders.iter().filter(|it| {
-            it.is_final && !it.volume_executed.is_zero() && ids.contains(&it.manager_id)
+    // what happened in the range: the buys filled, the sells and what they earned
+    let buys: Vec<(f64, f64)> = app
+        .model
+        .data
+        .orders
+        .iter()
+        .filter(|it| {
+            it.side == Side::Buy
+                && it.is_final
+                && !it.volume_executed.is_zero()
+                && ids.contains(&it.manager_id)
         })
-    {
-        let at = order.close_time.unwrap_or(order.open_time) * 1000.0;
-        if at >= since as f64 {
-            let point = (at, value_at(&series, at));
-            match order.side {
-                Side::Buy => buys.push(point),
-                Side::Sell => sells.push(point),
-            }
-        }
-    }
+        .map(|it| it.close_time.unwrap_or(it.open_time) * 1000.0)
+        .filter(|at| *at >= since as f64)
+        .map(|at| (at, value_at(&series, at)))
+        .collect();
+    let sells: Vec<(f64, f64)> = app
+        .model
+        .trades
+        .iter()
+        .filter(|it| ids.contains(&it.manager_id) && it.at * 1000.0 >= since as f64)
+        .map(|it| (it.at * 1000.0, to_f64(it.pnl)))
+        .collect();
+    let earned: f64 = sells.iter().map(|it| it.1).sum();
 
     let y = bounds(series.iter().map(|it| it.1).chain([target]));
-    let target_line = level(since, now, target);
     let color = theme::trend(moved);
     let shade = match color {
         UP => theme::UP_SHADE,
         DOWN => theme::DOWN_SHADE,
         _ => FAINT,
     };
-    let datasets = vec![
-        Dataset::default()
-            .marker(Marker::Braille)
-            .graph_type(GraphType::Area)
-            .fill_to_y(y[0])
-            .style(Style::new().fg(shade))
-            .data(&series),
-        Dataset::default()
-            .name(Line::from(Span::styled(
-                format!("TARGET {}", format::money(target)),
-                Style::new().fg(GOLD),
-            )))
-            .marker(Marker::Dot)
-            .graph_type(GraphType::Scatter)
-            .style(Style::new().fg(GOLD))
-            .data(&target_line),
-        Dataset::default()
-            .marker(Marker::Braille)
-            .graph_type(GraphType::Line)
-            .style(Style::new().fg(color))
-            .data(&series),
-        Dataset::default()
-            .name(Line::from(Span::styled(
-                format!("BUY {}", buys.len()),
-                Style::new().fg(UP),
-            )))
-            .marker(Marker::Block)
-            .graph_type(GraphType::Scatter)
-            .style(Style::new().fg(UP))
-            .data(&buys),
-        Dataset::default()
-            .name(Line::from(Span::styled(
-                format!("SELL {}", sells.len()),
-                Style::new().fg(DOWN),
-            )))
-            .marker(Marker::Block)
-            .graph_type(GraphType::Scatter)
-            .style(Style::new().fg(DOWN))
-            .data(&sells),
-    ];
     let block = block_with(
         app,
         shown,
         name,
         vec![
             Span::styled(format!("{} ", format::money(current)), theme::bold(color)),
-            Span::styled(
-                format!("{} in range", format::signed(moved)),
-                Style::new().fg(color),
-            ),
+            Span::styled(format::signed(moved), Style::new().fg(color)),
         ],
     );
-    let chart = ratatui::widgets::Chart::new(datasets)
-        .block(block)
-        .x_axis(time_axis(since, now))
-        .y_axis(value_axis(y, format::money))
-        .legend_position(Some(LegendPosition::TopLeft))
-        .hidden_legend_constraints((
-            ratatui::layout::Constraint::Percentage(90),
-            ratatui::layout::Constraint::Percentage(90),
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let [flags_row, middle, footer] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Fill(1),
+        Constraint::Length(1),
+    ])
+    .areas(inner);
+    let [labels, plot] =
+        Layout::horizontal([Constraint::Length(LABELS), Constraint::Fill(1)]).areas(middle);
+
+    // the values at the left, the times and the counts below
+    let height = labels.height as usize;
+    let mut values = vec![Line::from(""); height];
+    for (row, value) in [
+        (0, y[1]),
+        (height / 2, (y[0] + y[1]) / 2.0),
+        (height.saturating_sub(1), y[0]),
+    ] {
+        if let Some(line) = values.get_mut(row) {
+            *line = Line::from(Span::styled(format::money(value), theme::dim()));
+        }
+    }
+    frame.render_widget(Paragraph::new(values), labels);
+
+    let moment = |at: i64| {
+        if now - since < 24 * 3_600_000 {
+            format::clock(at)[..5].to_string()
+        } else {
+            format::stamp(at)
+        }
+    };
+    frame.render_widget(
+        Paragraph::new(Span::styled(moment(since), theme::dim())),
+        footer,
+    );
+    frame.render_widget(
+        Paragraph::new(Span::styled(moment(now), theme::dim())).alignment(Alignment::Right),
+        footer,
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(format!("▲ {} BUYS  ", buys.len()), Style::new().fg(UP)),
+            Span::styled(format!("▼ {} SELLS ", sells.len()), Style::new().fg(DOWN)),
+            Span::styled(format::signed(earned), theme::bold(theme::trend(earned))),
+        ]))
+        .alignment(Alignment::Center),
+        footer,
+    );
+
+    let columns = plot.width.saturating_sub(1) as usize;
+    // on a row of their own, at whole columns: never redrawn elsewhere, nor over the curve
+    let flags = sell_flags(&sells, since as f64, now as f64, columns);
+    let [_, flags_area] =
+        Layout::horizontal([Constraint::Length(LABELS + 1), Constraint::Fill(1)]).areas(flags_row);
+    frame.render_widget(Paragraph::new(flags_line(&flags)), flags_area);
+    let span = (now - since).max(1) as f64;
+    let (start, stop) = (since as f64, now as f64);
+    let target_line = level(since, now, target);
+    let dots = columns * 2;
+    let canvas = Canvas::default()
+        .block(
+            Block::new()
+                .borders(Borders::LEFT)
+                .border_style(Style::new().fg(FAINT)),
+        )
+        .background_color(theme::PANEL)
+        .marker(Marker::Braille)
+        .x_bounds([start, stop])
+        .y_bounds(y)
+        .paint(|context| {
+            // the area below the curve, a column of dots at a time
+            for dot in 0..dots {
+                let at = start + span * dot as f64 / dots.saturating_sub(1).max(1) as f64;
+                if let Some(value) = interpolated(&series, at) {
+                    context.draw(&Segment {
+                        x1: at,
+                        y1: y[0],
+                        x2: at,
+                        y2: value,
+                        color: shade,
+                    });
+                }
+            }
+            context.layer();
+            context.draw(&Points {
+                coords: &target_line,
+                color: GOLD,
+            });
+            for (at, _) in &sells {
+                let coords: Vec<(f64, f64)> = (0..=24)
+                    .map(|step| (*at, y[0] + (y[1] - y[0]) * step as f64 / 24.0))
+                    .collect();
+                context.draw(&Points {
+                    coords: &coords,
+                    color: DOWN,
+                });
+            }
+            for pair in series.windows(2) {
+                context.draw(&Segment {
+                    x1: pair[0].0,
+                    y1: pair[0].1,
+                    x2: pair[1].0,
+                    y2: pair[1].1,
+                    color,
+                });
+            }
+            context.layer();
+            context.print(
+                start,
+                target,
+                Span::styled(
+                    format!("TARGET {}", format::money(target)),
+                    Style::new().fg(GOLD),
+                ),
+            );
+            for (at, value) in &buys {
+                context.print(*at, *value, Span::styled("▲", Style::new().fg(UP)));
+            }
+            for (at, _) in &sells {
+                context.print(
+                    *at,
+                    value_at(&series, *at),
+                    Span::styled("▼", Style::new().fg(DOWN)),
+                );
+            }
+        });
+    frame.render_widget(canvas, plot);
+}
+
+/// The value at a time, between the points around it. None outside of the series
+fn interpolated(series: &[(f64, f64)], at: f64) -> Option<f64> {
+    let after = series.iter().position(|it| it.0 >= at)?;
+    if after == 0 {
+        return (series[0].0 == at).then_some(series[0].1);
+    }
+    let (before, next) = (series[after - 1], series[after]);
+    let part = (at - before.0) / (next.0 - before.0).max(1.0);
+    Some(before.1 + (next.1 - before.1) * part)
+}
+
+/// The width of the values at the left of the curve
+const LABELS: u16 = 10;
+
+/// What a sell says above the curve
+#[derive(Debug, PartialEq)]
+struct Flag {
+    column: usize,
+    text: String,
+    pnl: f64,
+}
+
+/// The flags at their columns
+fn flags_line(flags: &[Flag]) -> Line<'static> {
+    let mut spans = Vec::new();
+    let mut end = 0;
+    for flag in flags {
+        spans.push(Span::raw(" ".repeat(flag.column.saturating_sub(end))));
+        spans.push(Span::styled(
+            flag.text.clone(),
+            theme::bold(theme::trend(flag.pnl)),
         ));
-    frame.render_widget(chart, area);
+        end = flag.column + flag.text.chars().count();
+    }
+    Line::from(spans)
+}
+
+/// A flag per sell (time, P&L), the oldest first, at its column in the width of the chart. Sells
+/// too close for their texts to fit share a flag, "3× +1.02", which never covers the one before
+fn sell_flags(sells: &[(f64, f64)], since: f64, now: f64, columns: usize) -> Vec<Flag> {
+    /// Sells sharing a flag, and the column of the first one
+    struct Group {
+        wanted: usize,
+        count: usize,
+        pnl: f64,
+    }
+    impl Group {
+        fn text(&self) -> String {
+            if self.count > 1 {
+                format!("{}× {}", self.count, format::signed(self.pnl))
+            } else {
+                format::signed(self.pnl)
+            }
+        }
+        fn column(&self, columns: usize) -> usize {
+            self.wanted
+                .min(columns.saturating_sub(self.text().chars().count()))
+        }
+    }
+
+    let span = (now - since).max(1.0);
+    let mut groups: Vec<Group> = Vec::new();
+    for (at, pnl) in sells {
+        groups.push(Group {
+            wanted: ((at - since) / span * columns.saturating_sub(1) as f64) as usize,
+            count: 1,
+            pnl: *pnl,
+        });
+        // a flag which doesn't fit after the one before joins it, which may then not fit either
+        while let [.., before, last] = groups.as_slice() {
+            if last.column(columns) > before.column(columns) + before.text().chars().count() {
+                break;
+            }
+            let last = groups.pop().unwrap();
+            let before = groups.last_mut().unwrap();
+            before.count += last.count;
+            before.pnl += last.pnl;
+        }
+    }
+    groups
+        .iter()
+        .map(|it| Flag {
+            column: it.column(columns),
+            text: it.text(),
+            pnl: it.pnl,
+        })
+        .collect()
 }
 
 fn render_price(frame: &mut Frame, app: &App, area: Rect, shown: Chart) {
@@ -492,7 +663,7 @@ fn render_price(frame: &mut Frame, app: &App, area: Rect, shown: Chart) {
         return;
     }
 
-    let now = now_millis();
+    let now = app.loaded_at;
     let since = app.model.data.since.min(prices[0].0 as i64);
 
     // the levels of the manager: what its base cost, its open orders
@@ -660,4 +831,82 @@ fn render_trades(frame: &mut Frame, app: &App, area: Rect, shown: Chart) {
         )
         .y_axis(value_axis(y, format::signed));
     frame.render_widget(chart, area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn puts_each_sell_at_its_time_and_merges_the_close_ones() {
+        let flags = sell_flags(&[(0.0, 0.36), (50.0, 0.5), (51.0, 0.25)], 0.0, 100.0, 100);
+        assert_eq!(
+            flags,
+            vec![
+                Flag {
+                    column: 0,
+                    text: "+0.36".into(),
+                    pnl: 0.36
+                },
+                Flag {
+                    column: 49,
+                    text: "2× +0.75".into(),
+                    pnl: 0.75
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_flag_growing_at_the_edge_never_covers_the_one_before() {
+        // 3 sells at the very end of 30 columns: their flag moves left, onto the one before
+        let flags = sell_flags(
+            &[(70.0, 0.38), (98.0, 1.0), (99.0, 1.0), (100.0, 2.4)],
+            0.0,
+            100.0,
+            30,
+        );
+        for pair in flags.windows(2) {
+            assert!(
+                pair[0].column + pair[0].text.chars().count() < pair[1].column,
+                "{flags:?}"
+            );
+        }
+        let last = flags.last().unwrap();
+        assert!(last.column + last.text.chars().count() <= 30, "{flags:?}");
+        let total: f64 = flags.iter().map(|it| it.pnl).sum();
+        assert!((total - 4.78).abs() < 1e-9, "{flags:?}");
+    }
+
+    #[test]
+    fn writes_the_flags_at_their_columns() {
+        let line = flags_line(&[
+            Flag {
+                column: 2,
+                text: "+0.36".into(),
+                pnl: 0.36,
+            },
+            Flag {
+                column: 10,
+                text: "-1.00".into(),
+                pnl: -1.0,
+            },
+        ]);
+        assert_eq!(line.to_string(), "  +0.36   -1.00");
+    }
+
+    #[test]
+    fn keeps_a_flag_inside_the_chart() {
+        let flags = sell_flags(&[(100.0, 0.36)], 0.0, 100.0, 40);
+        assert_eq!(flags[0].column, 35);
+    }
+
+    #[test]
+    fn interpolates_between_the_points_only() {
+        let series = [(10.0, 100.0), (20.0, 200.0)];
+        assert_eq!(interpolated(&series, 15.0), Some(150.0));
+        assert_eq!(interpolated(&series, 10.0), Some(100.0));
+        assert_eq!(interpolated(&series, 9.0), None);
+        assert_eq!(interpolated(&series, 21.0), None);
+    }
 }
