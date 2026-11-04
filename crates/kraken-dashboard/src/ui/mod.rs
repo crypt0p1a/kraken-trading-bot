@@ -464,6 +464,7 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         key("↑↓", "MOVE"),
         key("⏎", if app.drilled { "ALL" } else { "FOCUS" }),
         key("c", "CHART"),
+        key("v", "CHART 2"),
         key("o", if app.open_only { "ALL ORDERS" } else { "OPEN" }),
         key("i", if app.show_idle { "HIDE IDLE" } else { "IDLE" }),
         key("r", "RELOAD"),
@@ -505,8 +506,9 @@ fn render_help(frame: &mut Frame, area: Rect) {
         ("esc", "back to all the managers"),
         (
             "c",
-            "chart: P&L, portfolio, price with the orders, sells, if the market moves",
+            "chart above: P&L, portfolio, price with the orders, sells, if the market moves",
         ),
+        ("v", "chart below, the same ones"),
         ("1 … 5", "range of the charts: 1H 24H 7D 30D ALL"),
         ("o", "only the open orders"),
         ("i", "the idle decisions in the tape"),

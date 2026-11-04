@@ -474,6 +474,33 @@ fn a_move_up_sells_at_the_target_and_moves_what_no_manager_owns() {
 }
 
 #[test]
+fn always_shows_two_different_charts() {
+    let fixture = path("two-charts");
+    let _storage = write(&fixture.path);
+    let (mut app, _database) = app(&fixture.path);
+
+    let text = screen(&app, 180, 48);
+    assert!(text.contains("PORTFOLIO · USD"), "{text}");
+    assert!(text.contains("IF THE MARKET MOVES · USD"), "{text}");
+
+    // each key its own chart, never the one of the other: back at the start in 4 presses
+    let (chart, second) = (app.chart, app.second_chart);
+    for key in ['c', 'v'] {
+        for _ in 0..4 {
+            app.on_key(KeyEvent::from(KeyCode::Char(key)));
+            assert_ne!(app.chart, app.second_chart);
+            screen(&app, 180, 48);
+        }
+        assert_eq!((app.chart, app.second_chart), (chart, second));
+    }
+
+    // too low for two: the first one alone
+    let low = screen(&app, 140, 30);
+    assert!(low.contains("PORTFOLIO · USD"), "{low}");
+    assert!(!low.contains("IF THE MARKET MOVES · USD"), "{low}");
+}
+
+#[test]
 fn draws_an_empty_database() {
     let fixture = path("empty");
     let _storage = Storage::open(&fixture.path).unwrap();

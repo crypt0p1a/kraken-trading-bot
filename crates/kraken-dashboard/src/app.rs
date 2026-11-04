@@ -103,7 +103,10 @@ pub struct App {
     /// Only the manager of the cursor, instead of all of them
     pub drilled: bool,
     pub panel: Panel,
+    /// The chart above
     pub chart: Chart,
+    /// The chart below
+    pub second_chart: Chart,
     pub range: Range,
     pub orders_row: usize,
     pub tape_row: usize,
@@ -129,7 +132,8 @@ impl App {
             cursor: 0,
             drilled: false,
             panel: Panel::Managers,
-            chart: Chart::Pnl,
+            chart: Chart::Portfolio,
+            second_chart: Chart::Scenarios,
             range: Range::Day,
             orders_row: 0,
             tape_row: 0,
@@ -271,7 +275,19 @@ impl App {
                 self.orders_row = 0;
                 self.tape_row = 0;
             }
-            KeyCode::Char('c') => self.chart = self.chart.next(),
+            KeyCode::Char('c') => {
+                self.chart = self.chart.next();
+                // never the same chart twice
+                if self.chart == self.second_chart {
+                    self.chart = self.chart.next();
+                }
+            }
+            KeyCode::Char('v') => {
+                self.second_chart = self.second_chart.next();
+                if self.second_chart == self.chart {
+                    self.second_chart = self.second_chart.next();
+                }
+            }
             KeyCode::Char('i') => {
                 self.show_idle = !self.show_idle;
                 self.tape_row = 0;

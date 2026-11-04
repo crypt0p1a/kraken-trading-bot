@@ -16,7 +16,7 @@ use ratatui::widgets::{
     Axis, Block, Cell, Dataset, GraphType, LegendPosition, Paragraph, Row, Table,
 };
 
-fn tabs(app: &App) -> Vec<Span<'static>> {
+fn tabs(shown: Chart) -> Vec<Span<'static>> {
     [
         (Chart::Pnl, "P&L"),
         (Chart::Portfolio, "VALUE"),
@@ -26,7 +26,7 @@ fn tabs(app: &App) -> Vec<Span<'static>> {
     ]
     .into_iter()
     .map(|(chart, name)| {
-        if chart == app.chart {
+        if chart == shown {
             Span::styled(format!(" {name} "), Style::new().fg(Color::Black).bg(AMBER))
         } else {
             Span::styled(format!(" {name} "), theme::dim())
@@ -35,19 +35,24 @@ fn tabs(app: &App) -> Vec<Span<'static>> {
     .collect()
 }
 
-fn block(app: &App, name: String) -> Block<'static> {
-    block_with(app, name, Vec::new())
+fn block(app: &App, shown: Chart, name: String) -> Block<'static> {
+    block_with(app, shown, name, Vec::new())
 }
 
 /// The chart, its range, what it sums up, then the tabs of the charts
-fn block_with(app: &App, name: String, summary: Vec<Span<'static>>) -> Block<'static> {
+fn block_with(
+    app: &App,
+    shown: Chart,
+    name: String,
+    summary: Vec<Span<'static>>,
+) -> Block<'static> {
     let mut details = vec![Span::styled(
         format!("· {} ", app.range.label()),
         theme::dim(),
     )];
     details.extend(summary);
     details.push(Span::raw(" "));
-    details.extend(tabs(app));
+    details.extend(tabs(shown));
     panel(title(&name, details), false)
 }
 
@@ -114,17 +119,31 @@ fn level(since: i64, now: i64, value: f64) -> Vec<(f64, f64)> {
         .collect()
 }
 
+/// Below this height, the two charts wouldn't be readable: only the first one is shown
+const TWO_CHARTS_HEIGHT: u16 = 18;
+
+/// The two charts, one above the other
 pub fn render(frame: &mut Frame, app: &App, area: Rect) {
-    match app.chart {
-        Chart::Pnl => render_pnl(frame, app, area),
-        Chart::Portfolio => render_portfolio(frame, app, area),
-        Chart::Price => render_price(frame, app, area),
-        Chart::Trades => render_trades(frame, app, area),
-        Chart::Scenarios => render_scenarios(frame, app, area),
+    if area.height < TWO_CHARTS_HEIGHT {
+        render_chart(frame, app, area, app.chart);
+        return;
+    }
+    let [top, bottom] = Layout::vertical([Constraint::Fill(1), Constraint::Fill(1)]).areas(area);
+    render_chart(frame, app, top, app.chart);
+    render_chart(frame, app, bottom, app.second_chart);
+}
+
+fn render_chart(frame: &mut Frame, app: &App, area: Rect, shown: Chart) {
+    match shown {
+        Chart::Pnl => render_pnl(frame, app, area, shown),
+        Chart::Portfolio => render_portfolio(frame, app, area, shown),
+        Chart::Price => render_price(frame, app, area, shown),
+        Chart::Trades => render_trades(frame, app, area, shown),
+        Chart::Scenarios => render_scenarios(frame, app, area, shown),
     }
 }
 
-fn render_pnl(frame: &mut Frame, app: &App, area: Rect) {
+fn render_pnl(frame: &mut Frame, app: &App, area: Rect, shown: Chart) {
     let ids = app.charted();
     let quote = ids
         .first()
@@ -133,7 +152,7 @@ fn render_pnl(frame: &mut Frame, app: &App, area: Rect) {
         .unwrap_or_default();
     let series = app.model.pnl_series(&ids);
     if series.len() < 2 {
-        let block = block(app, format!("P&L · {quote}"));
+        let block = block(app, shown, format!("P&L · {quote}"));
         empty(frame, area, block, "NOT ENOUGH TICKS IN THE RANGE");
         return;
     }
@@ -150,6 +169,7 @@ fn render_pnl(frame: &mut Frame, app: &App, area: Rect) {
     };
     let block = block_with(
         app,
+        shown,
         format!("P&L · {quote}"),
         vec![
             Span::styled(
@@ -190,13 +210,13 @@ fn render_pnl(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(chart, area);
 }
 
-fn render_scenarios(frame: &mut Frame, app: &App, area: Rect) {
+fn render_scenarios(frame: &mut Frame, app: &App, area: Rect, shown: Chart) {
     let ids = app.charted();
     let totals = app.model.totals_of(&ids);
     let block = panel(
         title(
             &format!("IF THE MARKET MOVES · {}", totals.quote),
-            tabs(app),
+            tabs(shown),
         ),
         false,
     );
@@ -329,7 +349,7 @@ fn value_at(series: &[(f64, f64)], at: f64) -> f64 {
         .map_or(0.0, |it| it.1)
 }
 
-fn render_portfolio(frame: &mut Frame, app: &App, area: Rect) {
+fn render_portfolio(frame: &mut Frame, app: &App, area: Rect, shown: Chart) {
     let ids = app.charted();
     let totals = app.model.totals_of(&ids);
     let quote = totals.quote.clone();
@@ -350,7 +370,7 @@ fn render_portfolio(frame: &mut Frame, app: &App, area: Rect) {
         ),
     };
     if series.len() < 2 {
-        let block = block(app, name);
+        let block = block(app, shown, name);
         empty(frame, area, block, "NOT ENOUGH TICKS IN THE RANGE");
         return;
     }
@@ -429,6 +449,7 @@ fn render_portfolio(frame: &mut Frame, app: &App, area: Rect) {
     ];
     let block = block_with(
         app,
+        shown,
         name,
         vec![
             Span::styled(format!("{} ", format::money(current)), theme::bold(color)),
@@ -450,13 +471,13 @@ fn render_portfolio(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(chart, area);
 }
 
-fn render_price(frame: &mut Frame, app: &App, area: Rect) {
+fn render_price(frame: &mut Frame, app: &App, area: Rect, shown: Chart) {
     let Some(manager) = app.selected() else {
-        empty(frame, area, block(app, "PRICE".into()), "NO MANAGER");
+        empty(frame, area, block(app, shown, "PRICE".into()), "NO MANAGER");
         return;
     };
     let pair = canonical(&manager.pair);
-    let block = block(app, format!("{pair} · #{}", manager.id));
+    let block = block(app, shown, format!("{pair} · #{}", manager.id));
     let Some(market) = app.model.market_of(manager.id) else {
         empty(frame, area, block, "NO TICKER FOR THIS PAIR");
         return;
@@ -551,7 +572,7 @@ fn render_price(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(chart, area);
 }
 
-fn render_trades(frame: &mut Frame, app: &App, area: Rect) {
+fn render_trades(frame: &mut Frame, app: &App, area: Rect, shown: Chart) {
     let ids = app.charted();
     let since = app.model.data.since as f64 / 1000.0;
     let trades: Vec<_> = app
@@ -568,7 +589,7 @@ fn render_trades(frame: &mut Frame, app: &App, area: Rect) {
         empty(
             frame,
             area,
-            block(app, "SELLS".into()),
+            block(app, shown, "SELLS".into()),
             "NO SELL IN THE RANGE",
         );
         return;
@@ -582,6 +603,7 @@ fn render_trades(frame: &mut Frame, app: &App, area: Rect) {
         .count();
     let block = block_with(
         app,
+        shown,
         "SELLS".into(),
         vec![
             Span::styled(format!("{} ", trades.len()), theme::text()),
