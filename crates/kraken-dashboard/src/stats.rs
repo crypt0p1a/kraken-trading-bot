@@ -130,6 +130,21 @@ pub fn performance(orders: &[&Order]) -> Performance {
     result
 }
 
+/// The moves of the market the scenarios look at, in %
+pub const MOVES: [i32; 7] = [-10, -5, -2, 0, 2, 5, 10];
+
+/// What the portfolio would be worth if every price moved at once by a percentage
+#[derive(Debug, Clone, PartialEq)]
+pub struct Scenario {
+    /// In %
+    pub moved: i32,
+    pub value: Decimal,
+    /// The open buys the move fills, at their limit
+    pub buys: usize,
+    /// The open sells the move fills, for what they cost + `sell_above`%, fees included
+    pub sells: usize,
+}
+
 /// The managers of a quote currency, together
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Totals {
@@ -293,6 +308,64 @@ impl Model {
             .map(to_f64)
             .filter(|it| *it > 0.0)?;
         Some((limit - last) / last * 100.0)
+    }
+
+    /// The portfolio of these managers, and of the account when given, for each move of the market.
+    /// One move at once, from the last prices: what the bot would place next isn't played. A cash
+    /// no manager owns stays as it is, a base no manager owns moves with the market
+    pub fn scenarios(&self, ids: &[i32], account: Option<&Account>) -> Vec<Scenario> {
+        let totals = self.totals_of(ids);
+        let (rest, held_outside) = account.map_or((Decimal::ZERO, Decimal::ZERO), |it| {
+            (
+                it.value() - totals.value,
+                (it.holdings - totals.exposure).max(Decimal::ZERO),
+            )
+        });
+        MOVES
+            .iter()
+            .map(|moved| {
+                let move_ = Decimal::from(*moved) / Decimal::ONE_HUNDRED;
+                let mut scenario = Scenario {
+                    moved: *moved,
+                    value: rest + held_outside * move_,
+                    buys: 0,
+                    sells: 0,
+                };
+                for manager in self.data.managers.iter().filter(|it| ids.contains(&it.id)) {
+                    self.play(manager, move_, &mut scenario);
+                }
+                scenario
+            })
+            .collect()
+    }
+
+    /// Adds to the scenario what the manager would be worth after the move
+    fn play(&self, manager: &Manager, move_: Decimal, scenario: &mut Scenario) {
+        let price = manager.last_price * (Decimal::ONE + move_);
+        let mut quote = manager.quote_available + manager.quote_in_buy_order;
+        let mut base = manager.base();
+        // a manager has one open order at most: it waits for its end before placing another
+        if let Some(order) = self.open_orders_of(manager.id).last()
+            && let Some(limit) = order.limit_price
+        {
+            let remaining = order.volume - order.volume_executed;
+            match order.side {
+                Side::Buy if move_ < Decimal::ZERO && price <= limit => {
+                    quote -= manager.quote_in_buy_order;
+                    base += remaining;
+                    scenario.buys += 1;
+                }
+                Side::Sell if move_ > Decimal::ZERO && price >= limit && !base.is_zero() => {
+                    let sold = remaining.min(base);
+                    let cost = manager.position_cost * sold / base;
+                    quote += cost * (Decimal::ONE + manager.sell_above / Decimal::ONE_HUNDRED);
+                    base -= sold;
+                    scenario.sells += 1;
+                }
+                _ => {}
+            }
+        }
+        scenario.value += quote + base * price;
     }
 
     /// What the whole account was worth in the quote ("EUR") over the range, oldest first

@@ -1,18 +1,20 @@
-//! The chart, one of four: the P&L over time, the portfolio, the price with the levels of the
-//! orders, the P&L of each sell
+//! The chart, one of five: the P&L over time, the portfolio, the price with the levels of the
+//! orders, the P&L of each sell, the portfolio if the market moves
 
 use super::{panel, title};
 use crate::app::{App, Chart, now_millis};
-use crate::data::{Side, to_f64};
+use crate::data::{Side, percent, to_f64};
 use crate::format;
 use crate::stats::canonical;
 use crate::theme::{self, AMBER, CYAN, DOWN, FAINT, GOLD, UP};
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Axis, Block, Dataset, GraphType, LegendPosition, Paragraph};
+use ratatui::widgets::{
+    Axis, Block, Cell, Dataset, GraphType, LegendPosition, Paragraph, Row, Table,
+};
 
 fn tabs(app: &App) -> Vec<Span<'static>> {
     [
@@ -20,6 +22,7 @@ fn tabs(app: &App) -> Vec<Span<'static>> {
         (Chart::Portfolio, "VALUE"),
         (Chart::Price, "PRICE"),
         (Chart::Trades, "SELLS"),
+        (Chart::Scenarios, "WHAT IF"),
     ]
     .into_iter()
     .map(|(chart, name)| {
@@ -117,6 +120,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         Chart::Portfolio => render_portfolio(frame, app, area),
         Chart::Price => render_price(frame, app, area),
         Chart::Trades => render_trades(frame, app, area),
+        Chart::Scenarios => render_scenarios(frame, app, area),
     }
 }
 
@@ -184,6 +188,135 @@ fn render_pnl(frame: &mut Frame, app: &App, area: Rect) {
         .x_axis(time_axis(since, now))
         .y_axis(value_axis(y, format::signed));
     frame.render_widget(chart, area);
+}
+
+fn render_scenarios(frame: &mut Frame, app: &App, area: Rect) {
+    let ids = app.charted();
+    let totals = app.model.totals_of(&ids);
+    let block = panel(
+        title(
+            &format!("IF THE MARKET MOVES · {}", totals.quote),
+            tabs(app),
+        ),
+        false,
+    );
+    if ids.is_empty() {
+        empty(frame, area, block, "NO MANAGER");
+        return;
+    }
+    let account = app
+        .focus()
+        .is_none()
+        .then(|| app.model.account(&totals.quote))
+        .flatten();
+    let scenarios = app.model.scenarios(&ids, account);
+    let now = scenarios
+        .iter()
+        .find(|it| it.moved == 0)
+        .map_or(totals.value, |it| it.value);
+    let largest = scenarios
+        .iter()
+        .map(|it| to_f64(it.value - now).abs())
+        .fold(0.0, f64::max);
+
+    const BAR: usize = 18;
+    let at_right = |text: String, style: Style| {
+        Cell::from(Line::from(Span::styled(text, style)).right_aligned())
+    };
+    let rows: Vec<Row> = scenarios
+        .iter()
+        .map(|scenario| {
+            let change = to_f64(scenario.value - now);
+            let color = theme::trend(change);
+            let length = if largest > 0.0 {
+                (change.abs() / largest * BAR as f64).round() as usize
+            } else {
+                0
+            };
+            let count = |count: usize| {
+                if count == 0 {
+                    ("—".to_string(), theme::faint())
+                } else {
+                    (count.to_string(), theme::text())
+                }
+            };
+            let (buys, buys_style) = count(scenario.buys);
+            let (sells, sells_style) = count(scenario.sells);
+            let moved = if scenario.moved == 0 {
+                "NOW".to_string()
+            } else {
+                format!("{:+}%", scenario.moved)
+            };
+            let row = Row::new(vec![
+                at_right(moved, theme::bold(AMBER)),
+                at_right(
+                    format::money(to_f64(scenario.value)),
+                    theme::bold(theme::TEXT),
+                ),
+                at_right(format::signed(change), Style::new().fg(color)),
+                at_right(
+                    format::percent(percent(scenario.value - now, now)),
+                    Style::new().fg(color),
+                ),
+                at_right(buys, buys_style),
+                at_right(sells, sells_style),
+                Cell::from(Span::styled("█".repeat(length), Style::new().fg(color))),
+            ]);
+            if scenario.moved == 0 {
+                row.style(Style::new().bg(theme::SELECTED))
+            } else {
+                row
+            }
+        })
+        .collect();
+
+    let name = |name| Line::from(Span::styled(name, theme::label())).right_aligned();
+    let header = Row::new(vec![
+        Cell::from(name("MOVE")),
+        Cell::from(name("VALUE")),
+        Cell::from(name("VS NOW")),
+        Cell::from(name("%")),
+        Cell::from(name("BUYS")),
+        Cell::from(name("SELLS")),
+        Cell::from(Line::from(Span::styled("", theme::label()))),
+    ]);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let [table, note] = Layout::vertical([Constraint::Length(9), Constraint::Fill(1)]).areas(inner);
+    frame.render_widget(
+        Table::new(
+            rows,
+            [
+                Constraint::Length(5),
+                Constraint::Length(10),
+                Constraint::Length(9),
+                Constraint::Length(8),
+                Constraint::Length(5),
+                Constraint::Length(5),
+                Constraint::Fill(1),
+            ],
+        )
+        .header(header)
+        .column_spacing(1),
+        table,
+    );
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(Span::styled(
+                " Every price moves at once, from the last ones. Not a forecast.",
+                theme::dim(),
+            )),
+            Line::from(Span::styled(
+                " Filled: the buys the move reaches, the sells at their target, fees included.",
+                theme::dim(),
+            )),
+            Line::from(Span::styled(
+                " The orders the bot would place next aren't played.",
+                theme::dim(),
+            )),
+        ]),
+        note,
+    );
 }
 
 /// The value at a time: the last point before it, the first one before them all

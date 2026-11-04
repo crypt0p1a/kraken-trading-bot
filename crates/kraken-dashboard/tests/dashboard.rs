@@ -342,6 +342,11 @@ fn draws_the_desk() {
         app.chart = chart;
         screen(&app, 180, 48);
     }
+    app.chart = Chart::Scenarios;
+    let scenarios = screen(&app, 180, 48);
+    assert!(scenarios.contains("IF THE MARKET MOVES"), "{scenarios}");
+    assert!(scenarios.contains("NOW"), "{scenarios}");
+    assert!(scenarios.contains("-10%"), "{scenarios}");
     app.chart = Chart::Portfolio;
     let portfolio = screen(&app, 180, 48);
     assert!(portfolio.contains("PORTFOLIO · USD"), "{portfolio}");
@@ -355,6 +360,117 @@ fn draws_the_desk() {
     app.on_key(KeyEvent::from(KeyCode::Char('?')));
     assert!(screen(&app, 120, 32).contains("HELP"));
     assert!(screen(&app, 60, 20).contains("enlarge the terminal"));
+}
+
+#[test]
+fn plays_the_moves_of_the_market_on_the_portfolio() {
+    let fixture = path("scenarios");
+    let _storage = write(&fixture.path);
+    let (app, _database) = app(&fixture.path);
+    let model = &app.model;
+    let account = model.account("USD");
+    let scenarios = model.scenarios(&[1, 2], account);
+    let at = |moved: i32| scenarios.iter().find(|it| it.moved == moved).unwrap();
+
+    // no move: the portfolio as it is, nothing filled
+    assert_eq!(at(0).value, d("80.06"));
+    assert_eq!((at(0).buys, at(0).sells), (0, 0));
+
+    // -2%: 74578 reaches the buy of manager 1 at 75500, its 0.0003 left bought
+    let (first, second) = (model.manager(1).unwrap(), model.manager(2).unwrap());
+    let price = d("76100") * d("0.98");
+    let rest = d("80.06") - first.value - second.value;
+    assert_eq!(
+        at(-2).value,
+        rest + first.quote_available
+            + (first.base() + d("0.0003")) * price
+            + second.quote_available
+            + second.base() * price
+    );
+    assert_eq!((at(-2).buys, at(-2).sells), (1, 0));
+
+    // +2%: the buy stays open, its quote in the portfolio
+    assert_eq!(at(2).buys, 0);
+    assert_eq!(
+        at(2).value,
+        rest + first.quote_available
+            + first.quote_in_buy_order
+            + first.base() * d("76100") * d("1.02")
+            + second.quote_available
+            + second.base() * d("76100") * d("1.02")
+    );
+}
+
+#[test]
+fn a_move_up_sells_at_the_target_and_moves_what_no_manager_owns() {
+    let fixture = path("scenarios-sell");
+    let storage = Storage::open(&fixture.path).unwrap();
+    let now = now_millis();
+    let seconds = now as f64 / 1000.0 - 3_600.0;
+    let orders = [
+        order(
+            "B1",
+            1,
+            OrderSide::Buy,
+            OrderStatus::Closed,
+            "0.0004",
+            "0.0004",
+            "70000",
+            "28",
+            "0.112",
+            seconds,
+        ),
+        order(
+            "S1",
+            1,
+            OrderSide::Sell,
+            OrderStatus::Open,
+            "0.0004",
+            "0",
+            "71000",
+            "0",
+            "0",
+            seconds + 60.0,
+        ),
+    ];
+    storage.upsert_orders(&orders).unwrap();
+    let config = config(1, "XBTUSD");
+    storage
+        .save_manager(&ManagerState {
+            balances: ledger::compute(config.budget, &orders),
+            config,
+            last_price: d("70000"),
+            at: now,
+        })
+        .unwrap();
+    // 0.001 XBT and 50 USD no manager owns, beside the 0.0004 XBT and 1.888 USD of manager 1
+    storage
+        .record_account(&AccountRecord {
+            at: now,
+            quote: "ZUSD".into(),
+            cash: d("51.888"),
+            holdings: d("98"),
+        })
+        .unwrap();
+    let (app, _database) = app(&fixture.path);
+    let model = &app.model;
+    let manager = model.manager(1).unwrap();
+    assert_eq!(manager.position_cost, d("28.112"));
+    let scenarios = model.scenarios(&[1], model.account("USD"));
+    let at = |moved: i32| scenarios.iter().find(|it| it.moved == moved).unwrap();
+
+    assert_eq!(at(0).value, d("149.888"));
+
+    // +2%: 71400 reaches the sell: its cost + 1.5%, and the bitcoins of the account at 71400
+    assert_eq!((at(2).buys, at(2).sells), (0, 1));
+    assert_eq!(
+        at(2).value,
+        d("50") + d("70") * d("1.02") + d("1.888") + d("28.112") * d("1.015")
+    );
+
+    // -2%: the sell stays open, everything at 68600
+    assert_eq!((at(-2).buys, at(-2).sells), (0, 0));
+    assert_eq!(at(-2).value, d("51.888") + d("98") * d("0.98"));
 }
 
 #[test]
@@ -448,7 +564,13 @@ fn refuses_what_isnt_a_database_of_the_bot() {
 fn demo() {
     let path = PathBuf::from(std::env::var("DASHBOARD_DEMO").unwrap());
     let (mut app, _database) = app(&path);
-    for chart in [Chart::Pnl, Chart::Portfolio, Chart::Price, Chart::Trades] {
+    for chart in [
+        Chart::Pnl,
+        Chart::Portfolio,
+        Chart::Price,
+        Chart::Trades,
+        Chart::Scenarios,
+    ] {
         app.chart = chart;
         println!("{}", screen(&app, 200, 52));
     }

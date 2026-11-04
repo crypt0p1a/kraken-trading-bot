@@ -505,7 +505,7 @@ fn render_help(frame: &mut Frame, area: Rect) {
         ("esc", "back to all the managers"),
         (
             "c",
-            "chart: P&L over time, portfolio, price with the orders, P&L of each sell",
+            "chart: P&L, portfolio, price with the orders, sells, if the market moves",
         ),
         ("1 … 5", "range of the charts: 1H 24H 7D 30D ALL"),
         ("o", "only the open orders"),

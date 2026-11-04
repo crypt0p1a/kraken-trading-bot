@@ -36,6 +36,8 @@ pub enum Chart {
     Price,
     /// The P&L of each sell
     Trades,
+    /// What the portfolio would be worth if the market moved
+    Scenarios,
 }
 
 impl Chart {
@@ -44,7 +46,8 @@ impl Chart {
             Self::Pnl => Self::Portfolio,
             Self::Portfolio => Self::Price,
             Self::Price => Self::Trades,
-            Self::Trades => Self::Pnl,
+            Self::Trades => Self::Scenarios,
+            Self::Scenarios => Self::Pnl,
         }
     }
 }
