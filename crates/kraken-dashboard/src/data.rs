@@ -68,6 +68,15 @@ pub struct Order {
 }
 
 impl Order {
+    /// What the table shows: the average price once something is executed, the limit before
+    pub fn shown_price(&self) -> f64 {
+        self.average_price
+            .filter(|_| !self.volume_executed.is_zero())
+            .or(self.limit_price)
+            .map(to_f64)
+            .unwrap_or_default()
+    }
+
     /// Share of the volume executed, from 0 to 1
     pub fn filled(&self) -> f64 {
         if self.volume.is_zero() {

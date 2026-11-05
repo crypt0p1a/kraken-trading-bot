@@ -808,3 +808,91 @@ fn shows_the_growth_of_each_period() {
     assert!(text.contains("GROWTH PER HOUR"), "{text}");
     assert!(text.contains("-0.50% prev +1.00% avg +0.25%"), "{text}");
 }
+
+fn arrow(app: &mut App, code: KeyCode, times: usize) {
+    for _ in 0..times {
+        app.on_key(KeyEvent::from(code));
+    }
+}
+
+#[test]
+fn sorts_the_managers_with_the_cursor_on_the_same_one() {
+    let fixture = path("sort-managers");
+    let _storage = write(&fixture.path);
+    let (mut app, database) = app(&fixture.path);
+    let numbers = |app: &App| -> Vec<i32> {
+        app.model
+            .data
+            .managers
+            .iter()
+            .map(|it| it.number())
+            .collect()
+    };
+    assert_eq!(numbers(&app), [1, 2]);
+    assert!(screen(&app, 200, 50).contains("MANAGER▲"));
+
+    // the P&L, the largest first: three columns on, the rows in its order
+    arrow(&mut app, KeyCode::Right, 3);
+    let pnl: Vec<_> = app.model.data.managers.iter().map(|it| it.pnl()).collect();
+    assert!(pnl[0] > pnl[1], "{pnl:?}");
+    let first = numbers(&app);
+    assert_eq!(app.selected().unwrap().number(), 1);
+    assert!(screen(&app, 200, 50).contains("P&L▼"));
+
+    // the other way, the cursor still on its manager
+    let selected = app.selected().unwrap().id;
+    app.on_key(KeyEvent::from(KeyCode::Char('s')));
+    assert_eq!(numbers(&app), [first[1], first[0]]);
+    assert_eq!(app.selected().unwrap().id, selected);
+    assert_eq!(app.selected().unwrap().number(), 1);
+    assert!(screen(&app, 200, 50).contains("P&L▲"));
+
+    // reading the database again keeps both
+    app.refresh(&database, true);
+    assert_eq!(numbers(&app), [first[1], first[0]]);
+    assert_eq!(app.selected().unwrap().id, selected);
+
+    // back to where it started, then around the circle
+    arrow(&mut app, KeyCode::Left, 3);
+    assert_eq!(numbers(&app), [1, 2]);
+    arrow(&mut app, KeyCode::Left, 1);
+    assert!(screen(&app, 200, 50).contains("TREND▼"));
+}
+
+#[test]
+fn sorts_the_orders_and_the_tape_on_their_own() {
+    let fixture = path("sort-orders");
+    let _storage = write(&fixture.path);
+    let (mut app, _database) = app(&fixture.path);
+    let txids =
+        |app: &App| -> Vec<String> { app.orders().iter().map(|it| it.txid.clone()).collect() };
+    arrow(&mut app, KeyCode::Tab, 1);
+    assert_eq!(txids(&app)[0], "O3");
+    assert!(screen(&app, 200, 50).contains("OPENED▼"));
+
+    // the highest price first, and the row back at the top
+    arrow(&mut app, KeyCode::Down, 2);
+    arrow(&mut app, KeyCode::Right, 4);
+    assert_eq!(app.orders_row, 0);
+    assert_eq!(txids(&app), ["O2", "O3", "O1", "O4"]);
+    assert!(screen(&app, 200, 50).contains("PRICE▼"));
+
+    // only the open order is to fill: it stays first, the "—" after it, both ways
+    arrow(&mut app, KeyCode::Right, 1);
+    assert_eq!(txids(&app)[0], "O3");
+    app.on_key(KeyEvent::from(KeyCode::Char('s')));
+    assert_eq!(txids(&app)[0], "O3");
+
+    // a column this width leaves out: the title of the panel tells it
+    arrow(&mut app, KeyCode::Right, 3);
+    assert!(screen(&app, 200, 50).contains("BY COST ▼"));
+
+    // the tape has its own order, the one of the managers didn't move
+    arrow(&mut app, KeyCode::Tab, 1);
+    assert!(screen(&app, 200, 50).contains("AT▼"));
+    arrow(&mut app, KeyCode::Right, 2);
+    let kinds: Vec<&str> = app.actions().iter().map(|it| it.kind.as_str()).collect();
+    assert_eq!(kinds, ["buy", "sell"]);
+    assert!(screen(&app, 200, 50).contains("WHAT▲"));
+    assert!(screen(&app, 200, 50).contains("MANAGER▲"));
+}

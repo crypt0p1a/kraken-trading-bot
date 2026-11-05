@@ -1,8 +1,10 @@
 //! The state of the dashboard: what's selected, what's shown, and the keys that change it
 
 use crate::data::{Action, Database, Manager, ManagerKey, Order, account_of, manager_number};
+use crate::sort::{self, Sort};
 use crate::stats::Model;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use std::collections::HashMap;
 use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,6 +136,10 @@ pub struct App {
     pub view: Option<i64>,
     pub orders_row: usize,
     pub tape_row: usize,
+    /// What each table follows: see [`App::sort`]
+    sorts: [Sort; 3],
+    /// The account shown just changed: the cursor stays at the top instead of following its manager
+    view_changed: bool,
     /// The idle decisions in the tape: one per manager and tick
     pub show_idle: bool,
     pub open_only: bool,
@@ -161,6 +167,8 @@ impl App {
             view: None,
             orders_row: 0,
             tape_row: 0,
+            sorts: [Panel::Managers, Panel::Orders, Panel::Tape].map(Sort::first),
+            view_changed: false,
             show_idle: false,
             open_only: false,
             help: false,
@@ -199,13 +207,13 @@ impl App {
         let now = now_millis();
         match database.load(self.range.since(now), now, self.view) {
             Ok(data) => {
+                let view_changed = std::mem::take(&mut self.view_changed);
+                let followed = self.selected().filter(|_| !view_changed).map(|it| it.id);
                 self.model = Model::new(data);
                 self.data_version = Some(version);
                 self.loaded_at = now;
                 self.error = None;
-                self.cursor = self
-                    .cursor
-                    .min(self.model.data.managers.len().saturating_sub(1));
+                self.sort_managers(followed);
             }
             Err(error) => self.error = Some(error),
         }
@@ -290,9 +298,45 @@ impl App {
                 .map(|(id, _)| *id),
         };
         self.cursor = 0;
+        self.view_changed = true;
         self.drilled = false;
         self.orders_row = 0;
         self.tape_row = 0;
+    }
+
+    /// What this table follows
+    pub fn sort(&self, panel: Panel) -> Sort {
+        self.sorts[panel as usize]
+    }
+
+    /// Puts the managers in the order of their table, the cursor on the manager it follows: the
+    /// values change the order at each tick
+    fn sort_managers(&mut self, followed: Option<ManagerKey>) {
+        let sort = self.sort(Panel::Managers);
+        let keys: HashMap<ManagerKey, sort::Key> = self
+            .model
+            .data
+            .managers
+            .iter()
+            .map(|it| (it.id, sort::manager(&self.model, it, sort.column)))
+            .collect();
+        let managers = &mut self.model.data.managers;
+        managers.sort_by_key(|it| it.id);
+        managers.sort_by(|a, b| keys[&a.id].compare(&keys[&b.id], sort.descending));
+        self.cursor = followed
+            .and_then(|id| managers.iter().position(|it| it.id == id))
+            .unwrap_or(self.cursor)
+            .min(managers.len().saturating_sub(1));
+    }
+
+    /// The table of the focused panel follows this now
+    fn set_sort(&mut self, sort: Sort) {
+        self.sorts[self.panel as usize] = sort;
+        match self.panel {
+            Panel::Managers => self.sort_managers(self.selected().map(|it| it.id)),
+            Panel::Orders => self.orders_row = 0,
+            Panel::Tape => self.tape_row = 0,
+        }
     }
 
     /// Milliseconds since the start, for the animations
@@ -323,17 +367,21 @@ impl App {
             .filter(|it| self.shown(it.manager_id) && (!self.open_only || !it.is_final))
             .collect();
         orders.sort_by(|a, b| b.open_time.total_cmp(&a.open_time));
-        orders
+        let sort = self.sort(Panel::Orders);
+        sort::sorted(orders, sort, |it| sort::order(&self.model, it, sort.column))
     }
 
     /// The actions of the tape, the most recent first
     pub fn actions(&self) -> Vec<&Action> {
-        self.model
+        let actions = self
+            .model
             .data
             .actions
             .iter()
             .filter(|it| self.shown(it.manager_id) && (self.show_idle || it.kind != "idle"))
-            .collect()
+            .collect();
+        let sort = self.sort(Panel::Tape);
+        sort::sorted(actions, sort, |it| sort::action(it, sort.column))
     }
 
     /// The managers the charts are about
@@ -369,6 +417,9 @@ impl App {
             KeyCode::BackTab => self.panel = self.panel.previous(),
             KeyCode::Up | KeyCode::Char('k') => self.scroll(-1),
             KeyCode::Down | KeyCode::Char('j') => self.scroll(1),
+            KeyCode::Left => self.set_sort(self.sort(self.panel).moved(self.panel, -1)),
+            KeyCode::Right => self.set_sort(self.sort(self.panel).moved(self.panel, 1)),
+            KeyCode::Char('s') => self.set_sort(self.sort(self.panel).reversed()),
             KeyCode::PageUp => self.scroll(-10),
             KeyCode::PageDown => self.scroll(10),
             KeyCode::Home | KeyCode::Char('g') => self.scroll(-1_000_000),

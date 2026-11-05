@@ -489,6 +489,7 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         key("q", "QUIT"),
         key("tab", "PANEL"),
         key("↑↓", "MOVE"),
+        key("←→ s", "SORT"),
         key("⏎", if app.drilled { "ALL" } else { "FOCUS" }),
         key("c v b", "CHARTS"),
         key("o", if app.open_only { "ALL ORDERS" } else { "OPEN" }),
@@ -528,6 +529,10 @@ fn render_help(frame: &mut Frame, area: Rect) {
     let lines = [
         ("tab / ⇧tab", "the panel the arrows move in"),
         ("↑ ↓ j k", "move, PgUp PgDn by 10, g G to the ends"),
+        (
+            "← → s",
+            "the column the table of the panel is sorted on, s the other way",
+        ),
         (
             "⏎",
             "focus on the manager of the cursor: tiles, chart, orders, tape",

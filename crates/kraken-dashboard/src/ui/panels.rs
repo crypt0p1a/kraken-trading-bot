@@ -4,6 +4,7 @@ use super::{panel, title};
 use crate::app::{App, Panel};
 use crate::data::{Action, Order, Side, to_f64};
 use crate::format;
+use crate::sort::Sort;
 use crate::stats::canonical;
 use crate::theme::{self, AMBER, CYAN, DIM, DOWN, FAINT, GOLD, TEXT, UP, VIOLET};
 use ratatui::Frame;
@@ -30,9 +31,21 @@ fn left<'a>(text: impl Into<String>, style: Style) -> Cell<'a> {
     Cell::from(Span::styled(text.into(), style))
 }
 
-fn header<'a>(names: &[(&'a str, bool)]) -> Row<'a> {
-    Row::new(names.iter().map(|(name, at_right)| {
-        let line = Line::from(Span::styled(*name, theme::label()));
+fn arrow(descending: bool) -> &'static str {
+    if descending { "▼" } else { "▲" }
+}
+
+/// The header of a table, the column it's sorted on told apart
+fn header<'a>(names: &[(&'a str, bool)], sorted: Option<(Sort, Panel)>) -> Row<'a> {
+    Row::new(names.iter().map(move |(name, at_right)| {
+        let sort = sorted.filter(|(sort, panel)| sort.name(*panel) == name.trim_start());
+        let line = Line::from(match sort {
+            Some((sort, _)) => Span::styled(
+                format!("{name}{}", arrow(sort.descending)),
+                theme::bold(AMBER),
+            ),
+            None => Span::styled(*name, theme::label()),
+        });
         Cell::from(if *at_right {
             line.right_aligned()
         } else {
@@ -99,7 +112,7 @@ pub fn render_managers(frame: &mut Frame, app: &App, area: Rect) {
 
     // the trend takes what the other columns leave, the open order 15 wide
     let tag_width = app.tag_width();
-    let spark = area.width.saturating_sub(113 + tag_width).clamp(6, 40) as usize;
+    let spark = area.width.saturating_sub(115 + tag_width).clamp(6, 40) as usize;
     let rows: Vec<Row> = model
         .data
         .managers
@@ -224,24 +237,28 @@ pub fn render_managers(frame: &mut Frame, app: &App, area: Rect) {
         Constraint::Length(8),
         Constraint::Length(15),
         Constraint::Length(10),
-        Constraint::Length(8),
+        Constraint::Length(9),
         Constraint::Fill(1),
-        Constraint::Length(7),
+        Constraint::Length(8),
         Constraint::Length(spark as u16),
     ];
-    let header = header(&[
-        ("  MANAGER", false),
-        ("PAIR", false),
-        ("VALUE", true),
-        ("P&L", true),
-        ("P&L %", true),
-        ("POSITION", true),
-        ("ENTRY", true),
-        ("VS ENTRY", true),
-        ("OPEN ORDER", false),
-        ("TO FILL", true),
-        ("TREND", false),
-    ]);
+    let sorted = Some((app.sort(Panel::Managers), Panel::Managers));
+    let header = header(
+        &[
+            ("  MANAGER", false),
+            ("PAIR", false),
+            ("VALUE", true),
+            ("P&L", true),
+            ("P&L %", true),
+            ("POSITION", true),
+            ("ENTRY", true),
+            ("VS ENTRY", true),
+            ("OPEN ORDER", false),
+            ("TO FILL", true),
+            ("TREND", false),
+        ],
+        sorted,
+    );
     let mut state = TableState::new().with_selected(Some(app.cursor));
     frame.render_stateful_widget(
         table(rows, &widths, header, focused).block(block),
@@ -309,28 +326,35 @@ pub fn render_orders(frame: &mut Frame, app: &App, area: Rect) {
     if app.open_only {
         details.push(Span::styled(" · OPEN ONLY", theme::bold(CYAN)));
     }
-    let block = panel(title("ORDERS", details), focused);
-    if orders.is_empty() {
-        empty(frame, area, block, "NO ORDER");
-        return;
-    }
-
     // narrow: the bar of the fill goes first, then the cost and the fee, then the volume
     let (hidden, bar): (&[usize], usize) = match area.width {
         105.. => (&[], 6),
         84.. => (&[8, 9], 0),
         _ => (&[6, 8, 9], 0),
     };
+    // no header to tell it when the table is sorted on a column it leaves out
+    let sort = app.sort(Panel::Orders);
+    if hidden.contains(&sort.column) {
+        details.push(Span::styled(
+            format!(
+                " · BY {} {}",
+                sort.name(Panel::Orders),
+                arrow(sort.descending)
+            ),
+            theme::bold(AMBER),
+        ));
+    }
+    let block = panel(title("ORDERS", details), focused);
+    if orders.is_empty() {
+        empty(frame, area, block, "NO ORDER");
+        return;
+    }
+
     let rows: Vec<Row> = orders
         .iter()
         .map(|order| {
             let (name, color) = side(order.side);
-            let price = order
-                .average_price
-                .filter(|_| !order.volume_executed.is_zero())
-                .or(order.limit_price)
-                .map(to_f64)
-                .unwrap_or_default();
+            let price = order.shown_price();
             let status = match order.status.as_str() {
                 "open" => Span::styled("OPEN", theme::bold(CYAN)),
                 "pending" => Span::styled("PENDING", theme::bold(GOLD)),
@@ -382,12 +406,12 @@ pub fn render_orders(frame: &mut Frame, app: &App, area: Rect) {
         vec![
             Constraint::Length(11),
             Constraint::Length(8 + app.tag_width()),
-            Constraint::Length(4),
+            Constraint::Length(5),
             Constraint::Length(7),
             Constraint::Length(9),
-            Constraint::Length(7),
+            Constraint::Length(8),
             Constraint::Length(10),
-            Constraint::Length((bar as u16 + 5).max(6)),
+            Constraint::Length((bar as u16 + 5).max(7)),
             Constraint::Length(8),
             Constraint::Length(6),
             Constraint::Fill(1),
@@ -410,7 +434,7 @@ pub fn render_orders(frame: &mut Frame, app: &App, area: Rect) {
         ],
         hidden,
     );
-    let header = header(&names);
+    let header = header(&names, Some((sort, Panel::Orders)));
     let mut state = TableState::new().with_selected(Some(app.orders_row.min(orders.len() - 1)));
     frame.render_stateful_widget(
         table(rows, &widths, header, focused).block(block),
@@ -517,7 +541,7 @@ pub fn render_markets(frame: &mut Frame, app: &App, area: Rect) {
         ],
         hidden,
     );
-    let header = header(&names);
+    let header = header(&names, None);
     frame.render_widget(
         Table::new(rows, widths)
             .header(header)
@@ -640,12 +664,15 @@ pub fn render_tape(frame: &mut Frame, app: &App, area: Rect) {
         Constraint::Length(5),
         Constraint::Fill(1),
     ];
-    let header = header(&[
-        ("  AT", false),
-        ("MGR", false),
-        ("WHAT", false),
-        ("", false),
-    ]);
+    let header = header(
+        &[
+            ("  AT", false),
+            ("MGR", false),
+            ("WHAT", false),
+            ("", false),
+        ],
+        Some((app.sort(Panel::Tape), Panel::Tape)),
+    );
     let mut state = TableState::new().with_selected(Some(app.tape_row.min(actions.len() - 1)));
     frame.render_stateful_widget(
         table(rows, &widths, header, focused).block(block),

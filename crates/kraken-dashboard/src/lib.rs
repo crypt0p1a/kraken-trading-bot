@@ -12,6 +12,7 @@
 pub mod app;
 pub mod data;
 pub mod format;
+pub mod sort;
 pub mod stats;
 pub mod theme;
 pub mod ui;
