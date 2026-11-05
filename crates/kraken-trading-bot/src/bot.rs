@@ -72,6 +72,8 @@ pub struct Bot<E: Exchange> {
     /// Pair of the configuration -> Kraken name
     pair_keys: HashMap<String, String>,
     notifier: Notifier,
+    /// Put before the title of the notifications, when there are several accounts
+    account_label: Option<String>,
     /// The failure last notified, per source: a failure repeated at each tick is notified once
     failures: Mutex<HashMap<String, String>>,
     /// Picks the manager a virtual manager copies
@@ -90,6 +92,7 @@ impl<E: Exchange> Bot<E> {
             config,
             pair_keys: HashMap::new(),
             notifier: Notifier::Silent,
+            account_label: None,
             failures: Mutex::new(HashMap::new()),
             random: fastrand::Rng::new(),
             ticks: 0,
@@ -130,6 +133,12 @@ impl<E: Exchange> Bot<E> {
         self
     }
 
+    /// Tells in its notifications which account the bot trades on
+    pub fn with_account_label(mut self, label: &str) -> Self {
+        self.account_label = Some(label.to_string());
+        self
+    }
+
     fn texts(&self) -> &'static Catalog {
         self.config
             .notifications
@@ -146,8 +155,11 @@ impl<E: Exchange> Bot<E> {
             .is_some_and(|it| it.wants(event))
     }
 
-    async fn notify(&self, notification: Notification) {
+    async fn notify(&self, mut notification: Notification) {
         if self.wants(notification.event) {
+            if let Some(label) = &self.account_label {
+                notification.title = format!("[{label}] {}", notification.title);
+            }
             self.notifier.send(notification).await;
         }
     }
