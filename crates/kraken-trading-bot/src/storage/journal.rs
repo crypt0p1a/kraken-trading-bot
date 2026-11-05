@@ -52,8 +52,9 @@ pub struct AccountRecord {
 impl Storage {
     pub fn record_action(&self, action: &ActionRecord) -> Result<()> {
         self.connection.execute(
-            "INSERT INTO actions (manager_id, at, kind, amount, price, reason, dry_run, txid, error)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO actions (manager_id, at, kind, amount, price, reason, dry_run, txid, error,
+                account)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 action.manager_id,
                 action.at,
@@ -64,6 +65,7 @@ impl Storage {
                 action.dry_run,
                 action.txid,
                 action.error,
+                self.account,
             ],
         )?;
         Ok(())
@@ -74,8 +76,8 @@ impl Storage {
     pub fn cancelled_by_the_bot(&self, txid: &str) -> Result<bool> {
         Ok(self.connection.query_row(
             "SELECT EXISTS (SELECT 1 FROM actions
-                WHERE txid = ?1 AND kind = 'buy_cancelled' AND error IS NULL)",
-            [txid],
+                WHERE account = ?1 AND txid = ?2 AND kind = 'buy_cancelled' AND error IS NULL)",
+            params![self.account, txid],
             |row| row.get(0),
         )?)
     }
@@ -83,9 +85,9 @@ impl Storage {
     pub fn actions_of(&self, manager_id: i32, limit: usize) -> Result<Vec<ActionRecord>> {
         let mut statement = self.connection.prepare_cached(
             "SELECT manager_id, at, kind, amount, price, reason, dry_run, txid, error FROM actions
-             WHERE manager_id = ?1 ORDER BY at DESC, id DESC LIMIT ?2",
+             WHERE account = ?3 AND manager_id = ?1 ORDER BY at DESC, id DESC LIMIT ?2",
         )?;
-        let rows = statement.query_map(params![manager_id, limit as i64], |row| {
+        let rows = statement.query_map(params![manager_id, limit as i64, self.account], |row| {
             Ok((
                 row.get::<_, i32>(0)?,
                 row.get::<_, i64>(1)?,
@@ -136,9 +138,10 @@ impl Storage {
 
     pub fn record_account(&self, account: &AccountRecord) -> Result<()> {
         self.connection.execute(
-            "INSERT OR REPLACE INTO account_snapshots (at, quote, cash, holdings)
-             VALUES (?1, ?2, ?3, ?4)",
+            "INSERT OR REPLACE INTO account_snapshots (account, at, quote, cash, holdings)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
+                self.account,
                 account.at,
                 account.quote,
                 account.cash.to_string(),
@@ -152,9 +155,11 @@ impl Storage {
     pub fn last_accounts(&self) -> Result<Vec<AccountRecord>> {
         let mut statement = self.connection.prepare_cached(
             "SELECT at, quote, cash, holdings FROM account_snapshots
-             WHERE at = (SELECT MAX(at) FROM account_snapshots) ORDER BY quote",
+             WHERE account = ?1
+                AND at = (SELECT MAX(at) FROM account_snapshots WHERE account = ?1)
+             ORDER BY quote",
         )?;
-        let rows = statement.query_map([], |row| {
+        let rows = statement.query_map([self.account], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, String>(1)?,

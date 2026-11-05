@@ -110,9 +110,9 @@ impl Storage {
         let transaction = self.connection.unchecked_transaction()?;
         {
             let mut statement = transaction.prepare_cached(&format!(
-                "INSERT INTO orders ({COLUMNS}, is_final, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
-                 ON CONFLICT (txid) DO UPDATE SET
+                "INSERT INTO orders ({COLUMNS}, is_final, updated_at, account)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+                 ON CONFLICT (account, txid) DO UPDATE SET
                     status = excluded.status, is_final = excluded.is_final,
                     volume = excluded.volume, volume_executed = excluded.volume_executed,
                     cost = excluded.cost, fee = excluded.fee, limit_price = excluded.limit_price,
@@ -139,6 +139,7 @@ impl Storage {
                     order.expire_time,
                     order.is_final(),
                     now,
+                    self.account,
                 ])?;
             }
         }
@@ -152,7 +153,9 @@ impl Storage {
         parameters: impl rusqlite::Params,
     ) -> Result<Vec<BotOrder>> {
         let mut statement = self.connection.prepare_cached(&format!(
-            "SELECT {COLUMNS} FROM orders WHERE {condition} ORDER BY open_time, txid"
+            "SELECT {COLUMNS} FROM orders WHERE account = {} AND {condition}
+             ORDER BY open_time, txid",
+            self.account
         ))?;
         let rows = statement.query_map(parameters, read)?;
         rows.map(|row| to_order(row?)).collect()
@@ -175,8 +178,9 @@ impl Storage {
     /// The price of the market the order was placed from: Kraken doesn't keep it
     pub fn set_order_reference(&self, txid: &str, reference: rust_decimal::Decimal) -> Result<()> {
         self.connection.execute(
-            "INSERT OR REPLACE INTO order_references (txid, reference) VALUES (?1, ?2)",
-            params![txid, reference.to_string()],
+            "INSERT OR REPLACE INTO order_references (account, txid, reference)
+             VALUES (?1, ?2, ?3)",
+            params![self.account, txid, reference.to_string()],
         )?;
         Ok(())
     }
@@ -187,8 +191,8 @@ impl Storage {
         use rusqlite::OptionalExtension;
         self.connection
             .query_row(
-                "SELECT reference FROM order_references WHERE txid = ?1",
-                [txid],
+                "SELECT reference FROM order_references WHERE account = ?2 AND txid = ?1",
+                params![txid, self.account],
                 |row| row.get::<_, String>(0),
             )
             .optional()?

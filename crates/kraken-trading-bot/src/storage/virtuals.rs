@@ -33,9 +33,9 @@ impl Storage {
     pub fn add_virtual_manager(&self, manager: &VirtualManager) -> Result<()> {
         let config = &manager.config;
         self.connection.execute(
-            "INSERT INTO virtual_managers (id, template_id, pair, budget, buy_below, sell_above,
-                mode, created_at, reason)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO virtual_managers (account, id, template_id, pair, budget, buy_below,
+                sell_above, mode, created_at, reason)
+             VALUES (?10, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 config.id,
                 manager.template_id,
@@ -46,6 +46,7 @@ impl Storage {
                 mode_name(config.mode),
                 manager.created_at,
                 manager.reason,
+                self.account,
             ],
         )?;
         Ok(())
@@ -55,9 +56,9 @@ impl Storage {
     pub fn virtual_managers(&self) -> Result<Vec<VirtualManager>> {
         let mut statement = self.connection.prepare_cached(
             "SELECT id, template_id, pair, budget, buy_below, sell_above, mode, created_at, reason
-             FROM virtual_managers WHERE deleted_at IS NULL ORDER BY id",
+             FROM virtual_managers WHERE account = ?1 AND deleted_at IS NULL ORDER BY id",
         )?;
-        let rows = statement.query_map([], |row| {
+        let rows = statement.query_map([self.account], |row| {
             Ok((
                 row.get::<_, i32>(0)?,
                 row.get::<_, i32>(1)?,
@@ -106,10 +107,13 @@ impl Storage {
         let transaction = self.connection.unchecked_transaction()?;
         transaction.execute(
             "UPDATE virtual_managers SET deleted_at = ?2, deleted_why = ?3
-             WHERE id = ?1 AND deleted_at IS NULL",
-            params![id, at, why],
+             WHERE account = ?4 AND id = ?1 AND deleted_at IS NULL",
+            params![id, at, why, self.account],
         )?;
-        transaction.execute("DELETE FROM managers WHERE id = ?1", [id])?;
+        transaction.execute(
+            "DELETE FROM managers WHERE account = ?1 AND id = ?2",
+            params![self.account, id],
+        )?;
         transaction.commit()?;
         Ok(())
     }
@@ -118,8 +122,8 @@ impl Storage {
     pub fn virtual_ids(&self) -> Result<Vec<i32>> {
         let mut statement = self
             .connection
-            .prepare_cached("SELECT id FROM virtual_managers ORDER BY id")?;
-        let ids = statement.query_map([], |row| row.get(0))?;
+            .prepare_cached("SELECT id FROM virtual_managers WHERE account = ?1 ORDER BY id")?;
+        let ids = statement.query_map([self.account], |row| row.get(0))?;
         Ok(ids.collect::<rusqlite::Result<_>>()?)
     }
 
@@ -127,7 +131,11 @@ impl Storage {
     pub fn last_virtual_id(&self) -> Result<Option<i32>> {
         Ok(self
             .connection
-            .query_row("SELECT MAX(id) FROM virtual_managers", [], |row| row.get(0))
+            .query_row(
+                "SELECT MAX(id) FROM virtual_managers WHERE account = ?1",
+                [self.account],
+                |row| row.get(0),
+            )
             .optional()?
             .flatten())
     }

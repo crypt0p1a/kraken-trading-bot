@@ -34,11 +34,11 @@ impl Storage {
         let transaction = self.connection.unchecked_transaction()?;
 
         transaction.execute(
-            "INSERT INTO managers (id, pair, budget, buy_below, sell_above, mode, quote_available,
+            "INSERT INTO managers (account, id, pair, budget, buy_below, sell_above, mode, quote_available,
                 quote_in_buy_order, base_available, base_in_sell_order, position_cost, entry_price,
                 last_price, value, first_seen, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15)
-             ON CONFLICT (id) DO UPDATE SET
+             VALUES (?16, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15)
+             ON CONFLICT (account, id) DO UPDATE SET
                 pair = excluded.pair, budget = excluded.budget, buy_below = excluded.buy_below,
                 sell_above = excluded.sell_above, mode = excluded.mode,
                 quote_available = excluded.quote_available,
@@ -64,13 +64,14 @@ impl Storage {
                 last_price.to_string(),
                 value.to_string(),
                 at,
+                self.account,
             ],
         )?;
 
         transaction.execute(
-            "INSERT INTO manager_snapshots (manager_id, at, quote_available, quote_in_buy_order,
+            "INSERT INTO manager_snapshots (account, manager_id, at, quote_available, quote_in_buy_order,
                 base_available, base_in_sell_order, position_cost, entry_price, last_price, value)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+             VALUES (?11, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 config.id,
                 at,
@@ -82,6 +83,7 @@ impl Storage {
                 balances.entry_price.map(|it| it.to_string()),
                 last_price.to_string(),
                 value.to_string(),
+                self.account,
             ],
         )?;
 
@@ -93,9 +95,10 @@ impl Storage {
     pub fn manager_balances(&self, id: i32) -> Result<Option<(Balances, Decimal, i64)>> {
         let mut statement = self.connection.prepare_cached(
             "SELECT quote_available, quote_in_buy_order, base_available, base_in_sell_order,
-                position_cost, entry_price, last_price, updated_at FROM managers WHERE id = ?1",
+                position_cost, entry_price, last_price, updated_at FROM managers
+             WHERE account = ?1 AND id = ?2",
         )?;
-        let mut rows = statement.query([id])?;
+        let mut rows = statement.query(params![self.account, id])?;
         let Some(row) = rows.next()? else {
             return Ok(None);
         };
@@ -113,8 +116,8 @@ impl Storage {
     /// How many states of the manager are in its history
     pub fn snapshot_count(&self, id: i32) -> Result<usize> {
         Ok(self.connection.query_row(
-            "SELECT COUNT(*) FROM manager_snapshots WHERE manager_id = ?1",
-            [id],
+            "SELECT COUNT(*) FROM manager_snapshots WHERE account = ?1 AND manager_id = ?2",
+            params![self.account, id],
             |row| row.get::<_, i64>(0).map(|it| it as usize),
         )?)
     }

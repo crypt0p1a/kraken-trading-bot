@@ -40,9 +40,11 @@ impl Storage {
     pub fn command(&self, key: &str) -> Result<Option<CommandState>> {
         let state: Option<String> = self
             .connection
-            .query_row("SELECT state FROM commands WHERE key = ?1", [key], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT state FROM commands WHERE account = ?1 AND key = ?2",
+                params![self.account, key],
+                |row| row.get(0),
+            )
             .optional()?;
         state.as_deref().map(CommandState::parse).transpose()
     }
@@ -50,10 +52,11 @@ impl Storage {
     /// Asks for the command, unless it's under way
     pub fn request_command(&self, key: &str, at: i64) -> Result<()> {
         self.connection.execute(
-            "INSERT INTO commands (key, state, updated_at) VALUES (?1, 'refresh', ?2)
-             ON CONFLICT (key) DO UPDATE SET state = 'refresh', updated_at = excluded.updated_at
+            "INSERT INTO commands (account, key, state, updated_at) VALUES (?1, ?2, 'refresh', ?3)
+             ON CONFLICT (account, key) DO UPDATE SET state = 'refresh',
+                updated_at = excluded.updated_at
              WHERE state <> 'pending'",
-            params![key, at],
+            params![self.account, key, at],
         )?;
         Ok(())
     }
@@ -62,8 +65,8 @@ impl Storage {
     pub fn start_command(&self, key: &str, at: i64) -> Result<bool> {
         let changed = self.connection.execute(
             "UPDATE commands SET state = 'pending', updated_at = ?2
-             WHERE key = ?1 AND state = 'refresh'",
-            params![key, at],
+             WHERE account = ?3 AND key = ?1 AND state = 'refresh'",
+            params![key, at, self.account],
         )?;
         Ok(changed > 0)
     }
@@ -72,8 +75,8 @@ impl Storage {
     pub fn end_command(&self, key: &str, at: i64) -> Result<()> {
         self.connection.execute(
             "UPDATE commands SET state = 'idle', updated_at = ?2
-             WHERE key = ?1 AND state = 'pending'",
-            params![key, at],
+             WHERE account = ?3 AND key = ?1 AND state = 'pending'",
+            params![key, at, self.account],
         )?;
         Ok(())
     }

@@ -214,6 +214,7 @@ The SQLite database (`/data/kraken-bot.sqlite`) is there to work with what the b
 | `tickers` | the prices of the pairs of the managers, at each tick |
 | `indicators` | the [indicators](#indicators-of-the-market) of the pairs, at each tick |
 | `account_snapshots` | what the whole account is worth at each tick, per quote currency of the managers: the quote, plus the bases of their pairs at the last price |
+| `accounts` | the Kraken accounts, by name. Every table but `tickers` and `indicators` has an `account` column |
 | `commands` | what is asked of the bot from outside: `forced_tick`, `refresh` when the dashboard asks for a tick, `pending` while the bot does it, `idle` once done. The bot looks for it every 10 seconds between two ticks |
 | `sync_state` | where the synchronization of the orders is |
 | `virtual_managers` | the [virtual managers](#virtual-managers), deleted ones included |

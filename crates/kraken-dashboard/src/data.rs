@@ -366,9 +366,8 @@ impl Database {
             .map_err(sql)?;
         connection
             .execute(
-                "INSERT INTO commands (key, state, updated_at) VALUES ('forced_tick', 'refresh', ?1)
-                 ON CONFLICT (key) DO UPDATE SET state = 'refresh', updated_at = excluded.updated_at
-                 WHERE state <> 'pending'",
+                "UPDATE commands SET state = 'refresh', updated_at = ?1
+                 WHERE key = 'forced_tick' AND state <> 'pending'",
                 [at],
             )
             .map_err(sql)?;
