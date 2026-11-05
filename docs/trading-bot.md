@@ -56,10 +56,37 @@ managers:
 | Variable | Default | |
 |----------|---------|-|
 | `KRAKEN_API_KEY`, `KRAKEN_API_SECRET` | | the API key, see the permissions above |
+| `KRAKEN_BOT_ACCOUNTS` | `main` | the [Kraken accounts](#several-accounts) to trade on, separated by commas |
+| `KRAKEN_API_KEY_<NAME>`, `KRAKEN_API_SECRET_<NAME>` | | the API key of each account of the list |
 | `KRAKEN_BOT_CONFIG` | `managers.yaml` | the YAML file |
 | `KRAKEN_BOT_DATABASE` | `kraken-bot.sqlite` | the SQLite database |
 | `KRAKEN_BOT_NTFY_TOPIC`, `KRAKEN_BOT_NTFY_TOKEN` | | the [notifications](#notifications) |
 | `RUST_LOG` | `info` | |
+
+## Several accounts
+
+One bot can trade on several Kraken accounts at once, each with its own key and its own money. They
+all run the managers of the same `managers.yaml`, and each has its own orders, positions and virtual
+managers. In `.env`:
+
+```sh
+KRAKEN_BOT_ACCOUNTS=main,alice
+KRAKEN_API_KEY=...            # main: KRAKEN_API_KEY_MAIN works too
+KRAKEN_API_SECRET=...
+KRAKEN_API_KEY_ALICE=...
+KRAKEN_API_SECRET_ALICE=...
+```
+
+- A name is 1 to 12 of `a-z`, `0-9`, `-` and `_`; `-` becomes `_` in the variables.
+- **One key per account.** Two keys of one Kraken account would run its managers twice with the same
+  ids, mixing their orders. The bot refuses the same key twice, but can't tell two keys of one account
+  apart: that one is on you.
+- The budgets are per account: each needs the money of all the managers of the file.
+- History before several accounts belongs to `main`, so keep that name for the first account.
+- An account taken off the list stops trading: its open orders stay on Kraken, its last values stay in
+  the dashboard, added to the others.
+- The accounts tick at the same time and share a limit of calls to Kraken: the ticks take longer. A
+  refused key fails the ticks of its account only. The notifications start with `[name]`.
 
 ## Virtual managers
 

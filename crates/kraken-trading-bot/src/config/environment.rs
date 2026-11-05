@@ -1,3 +1,4 @@
+use crate::storage::MAIN_ACCOUNT;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -5,8 +6,8 @@ use std::path::{Path, PathBuf};
 /// the credentials never go in the YAML configuration
 #[derive(Clone, PartialEq)]
 pub struct Environment {
-    pub api_key: String,
-    pub api_secret: String,
+    /// The Kraken accounts the bot trades on, each with its key: KRAKEN_BOT_ACCOUNTS
+    pub accounts: Vec<AccountKey>,
     /// KRAKEN_BOT_CONFIG, `managers.yaml` by default
     pub config_path: PathBuf,
     /// KRAKEN_BOT_DATABASE, `kraken-bot.sqlite` by default
@@ -17,12 +18,46 @@ pub struct Environment {
     pub ntfy_token: Option<String>,
 }
 
+/// A Kraken account and its API key. All of them run the same managers
+#[derive(Clone, PartialEq)]
+pub struct AccountKey {
+    pub name: String,
+    pub api_key: String,
+    pub api_secret: String,
+}
+
+impl std::fmt::Debug for AccountKey {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AccountKey")
+            .field("name", &self.name)
+            .field("api_key", &"***")
+            .field("api_secret", &"***")
+            .finish()
+    }
+}
+
+/// The longest name of an account: it's shown in the columns of the dashboard
+const ACCOUNT_NAME_LENGTH: usize = 12;
+
+/// "alice" reads KRAKEN_API_KEY_ALICE: letters and digits, - becoming _
+fn suffix(name: &str) -> String {
+    name.to_ascii_uppercase().replace('-', "_")
+}
+
+fn valid_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= ACCOUNT_NAME_LENGTH
+        && name
+            .chars()
+            .all(|it| it.is_ascii_lowercase() || it.is_ascii_digit() || it == '-' || it == '_')
+}
+
 impl std::fmt::Debug for Environment {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("Environment")
-            .field("api_key", &"***")
-            .field("api_secret", &"***")
+            .field("accounts", &self.accounts)
             .field("config_path", &self.config_path)
             .field("database_path", &self.database_path)
             .field("ntfy_topic", &self.ntfy_topic.as_ref().map(|_| "***"))
@@ -48,15 +83,49 @@ impl Environment {
                 .map(|it| it.trim())
                 .filter(|it| !it.is_empty())
         };
-        let required = |name: &str| {
-            get(name)
+        // the key of an account, KRAKEN_API_KEY_ALICE; `main` also reads KRAKEN_API_KEY
+        let credential = |prefix: &str, account: &str| {
+            let name = format!("{prefix}_{}", suffix(account));
+            get(&name)
+                .or_else(|| (account == MAIN_ACCOUNT).then(|| get(prefix)).flatten())
                 .map(str::to_string)
-                .ok_or(format!("{name} is required"))
+                .ok_or(if account == MAIN_ACCOUNT {
+                    format!("{prefix} is required")
+                } else {
+                    format!("{name} is required")
+                })
         };
 
+        let names: Vec<&str> = get("KRAKEN_BOT_ACCOUNTS")
+            .map(|it| it.split(',').map(str::trim).collect())
+            .unwrap_or_else(|| vec![MAIN_ACCOUNT]);
+        let mut accounts: Vec<AccountKey> = Vec::new();
+        for name in names {
+            if !valid_name(name) {
+                return Err(format!(
+                    "KRAKEN_BOT_ACCOUNTS: \"{name}\" isn't a name: 1 to {ACCOUNT_NAME_LENGTH} of a-z, 0-9, - and _"
+                ));
+            }
+            if accounts.iter().any(|it| it.name == name) {
+                return Err(format!("KRAKEN_BOT_ACCOUNTS: {name} is there twice"));
+            }
+            let api_key = credential("KRAKEN_API_KEY", name)?;
+            // twice the same key: the managers of both would place their orders on one account
+            if let Some(other) = accounts.iter().find(|it| it.api_key == api_key) {
+                return Err(format!(
+                    "the accounts {} and {name} have the same API key",
+                    other.name
+                ));
+            }
+            accounts.push(AccountKey {
+                name: name.to_string(),
+                api_key,
+                api_secret: credential("KRAKEN_API_SECRET", name)?,
+            });
+        }
+
         Ok(Self {
-            api_key: required("KRAKEN_API_KEY")?,
-            api_secret: required("KRAKEN_API_SECRET")?,
+            accounts,
             config_path: Path::new(get("KRAKEN_BOT_CONFIG").unwrap_or("managers.yaml"))
                 .to_path_buf(),
             database_path: Path::new(get("KRAKEN_BOT_DATABASE").unwrap_or("kraken-bot.sqlite"))
@@ -138,8 +207,11 @@ mod tests {
     #[test]
     fn never_prints_the_credentials() {
         let environment = Environment::from_variables(&variables(&[
+            ("KRAKEN_BOT_ACCOUNTS", "main,alice"),
             ("KRAKEN_API_KEY", "the-key"),
             ("KRAKEN_API_SECRET", "the-secret"),
+            ("KRAKEN_API_KEY_ALICE", "the-alice-key"),
+            ("KRAKEN_API_SECRET_ALICE", "the-alice-secret"),
             ("KRAKEN_BOT_NTFY_TOPIC", "the-topic"),
             ("KRAKEN_BOT_NTFY_TOKEN", "the-token"),
         ]))
@@ -147,8 +219,105 @@ mod tests {
         assert_eq!(environment.ntfy_topic.as_deref(), Some("the-topic"));
         assert_eq!(environment.ntfy_token.as_deref(), Some("the-token"));
         let printed = format!("{environment:?}");
-        for secret in ["the-key", "the-secret", "the-topic", "the-token"] {
+        for secret in [
+            "the-key",
+            "the-secret",
+            "the-alice-key",
+            "the-alice-secret",
+            "the-topic",
+            "the-token",
+        ] {
             assert!(!printed.contains(secret), "{printed}");
+        }
+    }
+
+    #[test]
+    fn reads_a_single_account_without_any_list() {
+        let environment = Environment::from_variables(&variables(&[
+            ("KRAKEN_API_KEY", "key"),
+            ("KRAKEN_API_SECRET", "secret"),
+        ]))
+        .unwrap();
+        assert_eq!(environment.accounts.len(), 1);
+        assert_eq!(environment.accounts[0].name, MAIN_ACCOUNT);
+        assert_eq!(environment.accounts[0].api_key, "key");
+        assert_eq!(environment.accounts[0].api_secret, "secret");
+    }
+
+    #[test]
+    fn reads_the_key_of_each_account() {
+        let environment = Environment::from_variables(&variables(&[
+            ("KRAKEN_BOT_ACCOUNTS", "main, alice,the-other"),
+            ("KRAKEN_API_KEY", "key"),
+            ("KRAKEN_API_SECRET", "secret"),
+            ("KRAKEN_API_KEY_ALICE", "key-a"),
+            ("KRAKEN_API_SECRET_ALICE", "secret-a"),
+            ("KRAKEN_API_KEY_THE_OTHER", "key-o"),
+            ("KRAKEN_API_SECRET_THE_OTHER", "secret-o"),
+        ]))
+        .unwrap();
+        let keys: Vec<(&str, &str, &str)> = environment
+            .accounts
+            .iter()
+            .map(|it| {
+                (
+                    it.name.as_str(),
+                    it.api_key.as_str(),
+                    it.api_secret.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                ("main", "key", "secret"),
+                ("alice", "key-a", "secret-a"),
+                ("the-other", "key-o", "secret-o"),
+            ]
+        );
+    }
+
+    #[test]
+    fn refuses_what_would_mix_the_accounts() {
+        let error =
+            |pairs: &[(&str, &str)]| Environment::from_variables(&variables(pairs)).unwrap_err();
+        // the same key twice: two sets of managers on one account
+        assert!(
+            error(&[
+                ("KRAKEN_BOT_ACCOUNTS", "main,alice"),
+                ("KRAKEN_API_KEY", "same"),
+                ("KRAKEN_API_SECRET", "s"),
+                ("KRAKEN_API_KEY_ALICE", "same"),
+                ("KRAKEN_API_SECRET_ALICE", "s2"),
+            ])
+            .contains("same API key")
+        );
+        assert!(
+            error(&[
+                ("KRAKEN_BOT_ACCOUNTS", "main,main"),
+                ("KRAKEN_API_KEY", "k"),
+                ("KRAKEN_API_SECRET", "s"),
+            ])
+            .contains("twice")
+        );
+        // never the key of the main account for another one
+        assert!(
+            error(&[
+                ("KRAKEN_BOT_ACCOUNTS", "alice"),
+                ("KRAKEN_API_KEY", "k"),
+                ("KRAKEN_API_SECRET", "s"),
+            ])
+            .contains("KRAKEN_API_KEY_ALICE")
+        );
+        for name in ["main,,alice", "Alice", "a b", "name-much-too-long"] {
+            assert!(
+                error(&[
+                    ("KRAKEN_BOT_ACCOUNTS", name),
+                    ("KRAKEN_API_KEY", "k"),
+                    ("KRAKEN_API_SECRET", "s"),
+                ])
+                .contains("isn't a name")
+            );
         }
     }
 

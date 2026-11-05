@@ -7,16 +7,21 @@
 //! ```
 //!
 //! Environment (or `.env`): KRAKEN_API_KEY, KRAKEN_API_SECRET, KRAKEN_BOT_CONFIG,
-//! KRAKEN_BOT_DATABASE, RUST_LOG
+//! KRAKEN_BOT_DATABASE, RUST_LOG. For several Kraken accounts, trading the same managers:
+//! KRAKEN_BOT_ACCOUNTS=main,alice and KRAKEN_API_KEY_ALICE, KRAKEN_API_SECRET_ALICE
 
-use kraken_api::RestOptions;
+use kraken_api::{RateLimiter, RestOptions};
 use kraken_trading_bot::bot::{Bot, Outcome};
 use kraken_trading_bot::clock::now_millis;
-use kraken_trading_bot::config::{BotConfig, Environment};
+use kraken_trading_bot::config::{AccountKey, BotConfig, Environment};
 use kraken_trading_bot::exchange::KrakenExchange;
 use kraken_trading_bot::storage::{FORCED_TICK, Storage};
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::watch;
+use tokio::task::{JoinSet, LocalSet};
+use tracing::Instrument;
 use tracing_subscriber::EnvFilter;
 use trading_notify::Notifier;
 
@@ -76,6 +81,7 @@ async fn run(mode: Mode) -> Result<(), String> {
         tracing::warn!("LIVE: the orders are placed on Kraken");
     }
     tracing::info!(
+        accounts = environment.accounts.len(),
         managers = config.managers.len(),
         tick_interval = ?config.tick_interval,
         config = %environment.config_path.display(),
@@ -83,25 +89,91 @@ async fn run(mode: Mode) -> Result<(), String> {
         "starting"
     );
 
-    let notifier = notifier(&config, &environment)?;
-    let storage = Storage::open(&environment.database_path).map_err(|error| error.to_string())?;
-    let exchange = KrakenExchange::new(
-        environment.api_key,
-        environment.api_secret,
-        RestOptions::default(),
-    )
-    .map_err(|error| error.to_string())?;
-    let mut bot = Bot::new(exchange, storage, config).with_notifier(notifier);
-    bot.prepare().await.map_err(|error| error.to_string())?;
+    // the pairs of every account are checked before any of them trades. Not its key, which only
+    // private calls use: a refused key fails the ticks of its account, the others go on
+    let limiter = Arc::new(RateLimiter::default());
+    let several = environment.accounts.len() > 1;
+    let mut bots = Vec::new();
+    for account in &environment.accounts {
+        let span = tracing::info_span!("account", name = %account.name);
+        let bot = prepared(account, &config, &environment, limiter.clone(), several)
+            .instrument(span.clone())
+            .await
+            .map_err(|error| format!("account {}: {error}", account.name))?;
+        bots.push((bot, span));
+    }
 
     if mode == Mode::Check {
         tracing::info!("the configuration and the pairs are valid");
         return Ok(());
     }
+
+    let (stop, stopped) = watch::channel(false);
+    // on one thread: a connection to SQLite can't be shared between threads, and a tick waits for
+    // Kraken most of the time
+    LocalSet::new()
+        .run_until(async move {
+            let mut accounts = JoinSet::new();
+            for (bot, span) in bots {
+                accounts.spawn_local(trade(bot, mode, stopped.clone()).instrument(span));
+            }
+            let mut shutdown = std::pin::pin!(shutdown());
+            let mut asked = false;
+            loop {
+                tokio::select! {
+                    finished = accounts.join_next() => match finished {
+                        None => return Ok(()),
+                        Some(Ok(())) if asked || mode == Mode::Once => {}
+                        // the loop of an account only ends when asked to: a panic. The others stop
+                        // too, and the bot is started again by whatever watches it
+                        Some(outcome) => {
+                            let _ = stop.send(true);
+                            while accounts.join_next().await.is_some() {}
+                            return Err(format!("an account stopped: {outcome:?}"));
+                        }
+                    },
+                    _ = &mut shutdown, if !asked => {
+                        tracing::info!("stopping");
+                        asked = true;
+                        let _ = stop.send(true);
+                    }
+                }
+            }
+        })
+        .await
+}
+
+/// The bot of this account, its pairs checked on Kraken
+async fn prepared(
+    account: &AccountKey,
+    config: &BotConfig,
+    environment: &Environment,
+    limiter: Arc<RateLimiter>,
+    several: bool,
+) -> Result<Bot<KrakenExchange>, String> {
+    let storage = Storage::open_account(&environment.database_path, &account.name)
+        .map_err(|error| error.to_string())?;
+    let exchange = KrakenExchange::with_limiter(
+        account.api_key.clone(),
+        account.api_secret.clone(),
+        RestOptions::default(),
+        limiter,
+    )
+    .map_err(|error| error.to_string())?;
+    let mut bot =
+        Bot::new(exchange, storage, config.clone()).with_notifier(notifier(config, environment)?);
+    if several {
+        bot = bot.with_account_label(&account.name);
+    }
+    bot.prepare().await.map_err(|error| error.to_string())?;
+    Ok(bot)
+}
+
+/// The ticks of an account, until it's asked to stop: the tick in progress ends first
+async fn trade(mut bot: Bot<KrakenExchange>, mode: Mode, mut stopped: watch::Receiver<bool>) {
     bot.notify_started().await;
 
     let interval = bot.config().tick_interval;
-    let mut shutdown = std::pin::pin!(shutdown());
     loop {
         match bot.tick().await {
             Ok(report) => {
@@ -129,8 +201,8 @@ async fn run(mode: Mode) -> Result<(), String> {
             tracing::warn!(%error, "the forced tick couldn't be ended");
         }
 
-        if mode == Mode::Once {
-            return Ok(());
+        if mode == Mode::Once || *stopped.borrow() {
+            return;
         }
 
         // until the next tick, or a tick asked for meanwhile (the dashboard)
@@ -144,10 +216,8 @@ async fn run(mode: Mode) -> Result<(), String> {
             }
             tokio::select! {
                 _ = tokio::time::sleep(wait) => {}
-                _ = &mut shutdown => {
-                    tracing::info!("stopping");
-                    return Ok(());
-                }
+                // asked to stop, or nobody left to ask
+                _ = stopped.changed() => return,
             }
             match bot.storage().start_command(FORCED_TICK, now_millis()) {
                 Ok(true) => {
