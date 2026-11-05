@@ -38,6 +38,8 @@ pub enum Chart {
     Trades,
     /// What the portfolio would be worth if the market moved
     Scenarios,
+    /// What each period earned, in % of what the portfolio was worth before it
+    Growth,
 }
 
 impl Chart {
@@ -47,7 +49,8 @@ impl Chart {
             Self::Portfolio => Self::Price,
             Self::Price => Self::Trades,
             Self::Trades => Self::Scenarios,
-            Self::Scenarios => Self::Pnl,
+            Self::Scenarios => Self::Growth,
+            Self::Growth => Self::Pnl,
         }
     }
 }
@@ -71,6 +74,24 @@ impl Range {
             Self::Week => "7D",
             Self::Month => "30D",
             Self::All => "ALL",
+        }
+    }
+
+    /// The periods the growth compares in this range, UTC milliseconds: a tick of the bot at most
+    pub fn period(self) -> i64 {
+        const HOUR: i64 = 3_600_000;
+        match self {
+            Self::Hour => 5 * 60_000,
+            Self::Day => HOUR,
+            Self::Week | Self::Month | Self::All => 24 * HOUR,
+        }
+    }
+
+    pub fn period_label(self) -> &'static str {
+        match self {
+            Self::Hour => "5 MIN",
+            Self::Day => "HOUR",
+            Self::Week | Self::Month | Self::All => "DAY",
         }
     }
 

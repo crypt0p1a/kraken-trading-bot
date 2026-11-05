@@ -493,10 +493,11 @@ fn shows_a_column_of_different_charts() {
     assert!(text.contains("IF THE MARKET MOVES · USD"), "{text}");
     assert!(text.contains("XBTUSD · #1"), "{text}");
 
-    // each key its own place, never a chart of another: back at the start in 3 presses
+    // each key its own place, never a chart of another: back at the start in 4 presses, the 6
+    // charts without the 2 of the other places
     let charts = app.charts;
     for key in ['c', 'v', 'b'] {
-        for _ in 0..3 {
+        for _ in 0..4 {
             app.on_key(KeyEvent::from(KeyCode::Char(key)));
             let [first, second, third] = app.charts;
             assert!(first != second && first != third && second != third);
@@ -633,6 +634,7 @@ fn demo() {
         Chart::Price,
         Chart::Trades,
         Chart::Scenarios,
+        Chart::Growth,
     ] {
         app.charts[0] = chart;
         println!("{}", screen(&app, 200, 52));
@@ -772,4 +774,37 @@ fn says_nothing_of_the_accounts_with_a_single_one() {
     assert!(!text.contains("main·"), "{text}");
     press(&mut app, &database, 'a');
     assert_eq!(app.view, None);
+}
+
+#[test]
+fn shows_the_growth_of_each_period() {
+    let fixture = path("growth");
+    let storage = Storage::open(&fixture.path).unwrap();
+    let now = now_millis();
+    const HOUR: i64 = 3_600_000;
+    // +1 then -0.5 on 100 in the account, a deposit of 100 in the meantime
+    for (hours, value, account) in [(3, "30", "100"), (2, "31", "100"), (1, "30.5", "200")] {
+        let at = now - hours * HOUR;
+        storage
+            .save_manager(&ManagerState {
+                config: config(1, "XBTUSD"),
+                balances: ledger::compute(d(value), &[]),
+                last_price: d("70000"),
+                at,
+            })
+            .unwrap();
+        storage
+            .record_account(&AccountRecord {
+                at,
+                quote: "ZUSD".into(),
+                cash: d(account),
+                holdings: d("0"),
+            })
+            .unwrap();
+    }
+    let (mut app, _database) = app(&fixture.path);
+    app.charts[0] = Chart::Growth;
+    let text = screen(&app, 200, 50);
+    assert!(text.contains("GROWTH PER HOUR"), "{text}");
+    assert!(text.contains("-0.50% prev +1.00% avg +0.25%"), "{text}");
 }

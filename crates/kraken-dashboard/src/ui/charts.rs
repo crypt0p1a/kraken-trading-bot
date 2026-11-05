@@ -1,5 +1,5 @@
-//! The chart, one of five: the P&L over time, the portfolio, the price with the levels of the
-//! orders, the P&L of each sell, the portfolio if the market moves
+//! The chart, one of six: the P&L over time, the portfolio, the price with the levels of the
+//! orders, the P&L of each sell, the portfolio if the market moves, the growth of each period
 
 use super::{panel, title};
 use crate::app::{App, Chart};
@@ -113,6 +113,7 @@ fn render_chart(frame: &mut Frame, app: &App, area: Rect, chart: Chart) {
         Chart::Price => render_price(frame, app, area),
         Chart::Trades => render_trades(frame, app, area),
         Chart::Scenarios => render_scenarios(frame, app, area),
+        Chart::Growth => render_growth(frame, app, area),
     }
 }
 
@@ -710,6 +711,120 @@ fn render_price(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(chart, area);
 }
 
+/// The growth of each period in % of the portfolio, the latest at the right: the period still going
+/// on included
+fn render_growth(frame: &mut Frame, app: &App, area: Rect) {
+    let name = format!("GROWTH PER {}", app.range.period_label());
+    let ids = app.charted();
+    // a manager against itself, the whole account else
+    let quote = app.model.totals.first().map(|it| it.quote.clone());
+    let quote = quote.as_deref().filter(|_| app.focus().is_none());
+    let growth = app.model.growth_of(&ids, quote, app.range.period());
+    // as many bars as the width holds, the most recent
+    let columns = plot_columns(area);
+    let growth = &growth[growth.len().saturating_sub(columns / 2)..];
+    let Some(last) = growth.last() else {
+        empty(
+            frame,
+            area,
+            block(app, name),
+            "NOT ENOUGH PERIODS IN THE RANGE",
+        );
+        return;
+    };
+
+    let values: Vec<f64> = growth.iter().map(|it| it.percent).collect();
+    let average = values.iter().sum::<f64>() / values.len() as f64;
+    let mut summary = vec![Span::styled(
+        format!("{} ", format::percent(last.percent)),
+        theme::bold(theme::trend(last.percent)),
+    )];
+    if let Some(previous) = growth.len().checked_sub(2).map(|it| growth[it]) {
+        summary.push(Span::styled(
+            format!("prev {} ", format::percent(previous.percent)),
+            Style::new().fg(theme::trend(previous.percent)),
+        ));
+    }
+    summary.push(Span::styled(
+        format!("avg {}", format::percent(average)),
+        theme::dim(),
+    ));
+
+    let short = app.range.period() < 24 * 3_600_000;
+    let label = |at: f64| {
+        let at = at as i64;
+        if short {
+            format::clock(at)[..5].to_string()
+        } else {
+            format::date(at)[5..].to_string()
+        }
+    };
+    let oldest = growth.first().map_or(last.at, |it| it.at);
+    render_bars(
+        frame,
+        area,
+        block_with(app, name, summary),
+        &values,
+        [label(oldest), label(last.at)],
+        format::percent,
+    );
+}
+
+/// The columns of the plot of a chart of bars, without the borders and the labels of the values
+fn plot_columns(area: Rect) -> usize {
+    area.width.saturating_sub(12).max(1) as usize
+}
+
+/// Green and red bars from zero, from left to right
+fn render_bars(
+    frame: &mut Frame,
+    area: Rect,
+    block: Block,
+    values: &[f64],
+    ends: [String; 2],
+    show: fn(f64) -> String,
+) {
+    // a bar is a vertical line per column it covers: 60% of the room of a value
+    let per_value = plot_columns(area) as f64 / values.len() as f64;
+    let width = (per_value * 0.6).round().max(1.0) as usize;
+    let bars = |positive: bool| -> Vec<(f64, f64)> {
+        values
+            .iter()
+            .enumerate()
+            .filter(|(_, it)| (**it > 0.0) == positive)
+            .flat_map(|(index, it)| {
+                (0..width).map(move |column| (index as f64 + column as f64 / per_value, *it))
+            })
+            .collect()
+    };
+    let gains = bars(true);
+    let losses = bars(false);
+    let y = bounds(values.iter().copied().chain([0.0]));
+
+    let datasets = vec![
+        Dataset::default()
+            .marker(Marker::Block)
+            .graph_type(GraphType::Bar)
+            .style(Style::new().fg(UP))
+            .data(&gains),
+        Dataset::default()
+            .marker(Marker::Block)
+            .graph_type(GraphType::Bar)
+            .style(Style::new().fg(DOWN))
+            .data(&losses),
+    ];
+    let chart = ratatui::widgets::Chart::new(datasets)
+        .block(block)
+        .x_axis(
+            Axis::default()
+                .style(Style::new().fg(FAINT))
+                .bounds([-0.2, values.len() as f64])
+                .labels(ends.map(|it| Span::styled(it, theme::dim())).to_vec()),
+        )
+        .y_axis(value_axis(y, show));
+    frame.render_widget(chart, area);
+}
+
 fn render_trades(frame: &mut Frame, app: &App, area: Rect) {
     let ids = app.charted();
     let since = app.model.data.since as f64 / 1000.0;
@@ -719,8 +834,7 @@ fn render_trades(frame: &mut Frame, app: &App, area: Rect) {
         .iter()
         .filter(|it| ids.contains(&it.manager_id) && it.at >= since)
         .collect();
-    // the columns of the plot, without the borders and the labels of the values
-    let columns = area.width.saturating_sub(12).max(1) as usize;
+    let columns = plot_columns(area);
     // as many bars as the width holds, the most recent, 2 columns each at least
     let trades = &trades[trades.len().saturating_sub(columns / 2)..];
     if trades.is_empty() {
@@ -754,49 +868,15 @@ fn render_trades(frame: &mut Frame, app: &App, area: Rect) {
         ],
     );
 
-    // a bar is a vertical line per column it covers: 60% of the room of a sell
-    let per_trade = columns as f64 / trades.len() as f64;
-    let width = (per_trade * 0.6).round().max(1.0) as usize;
-    let bars = |positive: bool| -> Vec<(f64, f64)> {
-        trades
-            .iter()
-            .enumerate()
-            .filter(|(_, it)| (to_f64(it.pnl) > 0.0) == positive)
-            .flat_map(|(index, it)| {
-                let pnl = to_f64(it.pnl);
-                (0..width).map(move |column| (index as f64 + column as f64 / per_trade, pnl))
-            })
-            .collect()
-    };
-    let gains = bars(true);
-    let losses = bars(false);
-    let y = bounds(trades.iter().map(|it| to_f64(it.pnl)).chain([0.0]));
-
-    let datasets = vec![
-        Dataset::default()
-            .marker(Marker::Block)
-            .graph_type(GraphType::Bar)
-            .style(Style::new().fg(UP))
-            .data(&gains),
-        Dataset::default()
-            .marker(Marker::Block)
-            .graph_type(GraphType::Bar)
-            .style(Style::new().fg(DOWN))
-            .data(&losses),
-    ];
-    let chart = ratatui::widgets::Chart::new(datasets)
-        .block(block)
-        .x_axis(
-            Axis::default()
-                .style(Style::new().fg(FAINT))
-                .bounds([-0.2, trades.len() as f64])
-                .labels(vec![
-                    Span::styled("older", theme::dim()),
-                    Span::styled("latest", theme::dim()),
-                ]),
-        )
-        .y_axis(value_axis(y, format::signed));
-    frame.render_widget(chart, area);
+    let values: Vec<f64> = trades.iter().map(|it| to_f64(it.pnl)).collect();
+    render_bars(
+        frame,
+        area,
+        block,
+        &values,
+        ["older".into(), "latest".into()],
+        format::signed,
+    );
 }
 
 #[cfg(test)]

@@ -132,6 +132,58 @@ pub fn performance(orders: &[&Order]) -> Performance {
     result
 }
 
+/// What a period earned against the one before it
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Growth {
+    /// UTC milliseconds of the last point of the period
+    pub at: f64,
+    /// In the quote
+    pub earned: f64,
+    /// In % of what the portfolio was worth at the end of the period before
+    pub percent: f64,
+}
+
+/// The growth of each period, from `pnl`, the P&L over time. What's earned comes from the P&L, so
+/// money deposited or an account joining isn't growth. It's compared to `capital`, what the
+/// portfolio was worth then, else to `budget` and the P&L when `capital` doesn't go back that far.
+/// A period without any point, the bot being stopped, is skipped: the next one covers it
+pub fn growth(pnl: &[(f64, f64)], capital: &[(f64, f64)], budget: f64, period: i64) -> Vec<Growth> {
+    let mut closes: Vec<(f64, f64)> = Vec::new();
+    let mut current = None;
+    for point in pnl {
+        let bucket = (point.0 / period as f64).floor() as i64;
+        if current == Some(bucket) {
+            if let Some(last) = closes.last_mut() {
+                *last = *point;
+            }
+        } else {
+            closes.push(*point);
+            current = Some(bucket);
+        }
+    }
+    closes
+        .windows(2)
+        .map(|it| {
+            let (before, now) = (it[0], it[1]);
+            let index = capital.partition_point(|point| point.0 <= before.0);
+            let worth = match index {
+                0 => budget + before.1,
+                _ => capital[index - 1].1,
+            };
+            let earned = now.1 - before.1;
+            Growth {
+                at: now.0,
+                earned,
+                percent: if worth > 0.0 {
+                    earned / worth * 100.0
+                } else {
+                    0.0
+                },
+            }
+        })
+        .collect()
+}
+
 /// The moves of the market the scenarios look at, in %
 pub const MOVES: [i32; 7] = [-10, -5, -2, 0, 2, 5, 10];
 
@@ -388,6 +440,18 @@ impl Model {
         scenario.value += quote + base * price;
     }
 
+    /// The growth of these managers per period, against the whole account in the quote when given,
+    /// against what they're worth together else
+    pub fn growth_of(&self, ids: &[ManagerKey], quote: Option<&str>, period: i64) -> Vec<Growth> {
+        let capital = quote.map_or_else(Vec::new, |it| self.account_series(it));
+        growth(
+            &self.pnl_series(ids),
+            &capital,
+            to_f64(self.totals_of(ids).budget),
+            period,
+        )
+    }
+
     /// What the whole account was worth in the quote ("EUR") over the range, oldest first
     pub fn account_series(&self, quote: &str) -> Vec<(f64, f64)> {
         self.data
@@ -493,6 +557,55 @@ pub fn pnl_series(snapshots: &[&Snapshot], budgets: &HashMap<ManagerKey, f64>) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const HOUR: i64 = 3_600_000;
+
+    fn at(hours: f64) -> f64 {
+        hours * HOUR as f64
+    }
+
+    #[test]
+    fn compares_each_period_to_the_one_before() {
+        // the last point of each hour counts
+        let pnl = [
+            (at(0.5), 0.0),
+            (at(1.2), 5.0),
+            (at(1.9), 10.0),
+            (at(2.5), 4.0),
+        ];
+        let capital = [(at(0.5), 100.0), (at(1.9), 110.0)];
+        let growth = growth(&pnl, &capital, 0.0, HOUR);
+        assert_eq!(growth.len(), 2);
+        assert_eq!(growth[0].earned, 10.0);
+        assert_eq!(growth[0].percent, 10.0);
+        assert_eq!(growth[0].at, at(1.9));
+        // against what it was worth at the end of the hour before
+        assert_eq!(growth[1].earned, -6.0);
+        assert!((growth[1].percent + 6.0 / 110.0 * 100.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_deposit_is_not_growth() {
+        // 100 deposited during the second hour: the P&L doesn't move
+        let pnl = [(at(0.5), 2.0), (at(1.5), 2.0), (at(2.5), 3.0)];
+        let capital = [(at(0.5), 100.0), (at(1.5), 200.0), (at(2.5), 201.0)];
+        let growth = growth(&pnl, &capital, 0.0, HOUR);
+        assert_eq!(growth[0].percent, 0.0);
+        // and what's earned after it counts against the new amount
+        assert_eq!(growth[1].percent, 0.5);
+    }
+
+    #[test]
+    fn falls_back_on_the_budget_and_skips_the_empty_periods() {
+        // nothing during the second and third hours; no value of the account that old
+        let pnl = [(at(0.5), 0.0), (at(3.5), 3.0)];
+        let growth = growth(&pnl, &[(at(3.5), 500.0)], 30.0, HOUR);
+        assert_eq!(growth.len(), 1);
+        assert_eq!(growth[0].percent, 10.0);
+        assert!(super::growth(&pnl[..1], &[], 30.0, HOUR).is_empty());
+        // nothing to compare to
+        assert_eq!(super::growth(&pnl, &[], 0.0, HOUR)[0].percent, 0.0);
+    }
 
     #[test]
     fn says_what_was_earned_per_day() {
