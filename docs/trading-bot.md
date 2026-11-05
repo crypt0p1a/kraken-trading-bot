@@ -194,6 +194,10 @@ cargo run -p kraken-dashboard --example demo -- demo.sqlite
 cargo run -p kraken-dashboard -- demo.sqlite
 ```
 
+With several accounts, `a` goes through them in a circle: all of them added up (the managers named
+`alice·#7`), then each one alone. `t` asks for a tick of what's shown. An account joining makes the
+curve of the portfolio jump, as a deposit does.
+
 ## Notifications
 
 The bot notifies the phone through [ntfy](https://ntfy.sh) (the `trading-notify` crate, on the

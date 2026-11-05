@@ -330,7 +330,7 @@ fn render_portfolio(frame: &mut Frame, app: &App, area: Rect) {
         .flatten();
     let (name, series) = match app.focus() {
         Some(manager) => (
-            format!("MANAGER #{} · {quote}", manager.id),
+            format!("MANAGER {} · {quote}", app.manager_name(manager.id)),
             app.model.manager_series(manager.id),
         ),
         None => (
@@ -615,7 +615,7 @@ fn render_price(frame: &mut Frame, app: &App, area: Rect) {
         return;
     };
     let pair = canonical(&manager.pair);
-    let block = block(app, format!("{pair} · #{}", manager.id));
+    let block = block(app, format!("{pair} · {}", app.manager_name(manager.id)));
     let Some(market) = app.model.market_of(manager.id) else {
         empty(frame, area, block, "NO TICKER FOR THIS PAIR");
         return;

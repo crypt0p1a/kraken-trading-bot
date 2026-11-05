@@ -1,6 +1,6 @@
 //! The state of the dashboard: what's selected, what's shown, and the keys that change it
 
-use crate::data::{Action, Database, Manager, Order};
+use crate::data::{Action, Database, Manager, ManagerKey, Order, account_of, manager_number};
 use crate::stats::Model;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::time::Instant;
@@ -87,6 +87,9 @@ impl Range {
     }
 }
 
+/// Letters of the name of an account before its managers, when the accounts are together
+const ACCOUNT_TAG: usize = 5;
+
 pub fn now_millis() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -106,6 +109,8 @@ pub struct App {
     /// The charts of the column, from the top
     pub charts: [Chart; 3],
     pub range: Range,
+    /// The account shown, all of them added up when None
+    pub view: Option<i64>,
     pub orders_row: usize,
     pub tape_row: usize,
     /// The idle decisions in the tape: one per manager and tick
@@ -132,6 +137,7 @@ impl App {
             panel: Panel::Managers,
             charts: [Chart::Portfolio, Chart::Scenarios, Chart::Price],
             range: Range::Day,
+            view: None,
             orders_row: 0,
             tape_row: 0,
             show_idle: false,
@@ -151,7 +157,7 @@ impl App {
         if !std::mem::take(&mut self.tick_asked) {
             return;
         }
-        match database.request_tick(now_millis()) {
+        match database.request_tick(now_millis(), self.view) {
             Ok(()) => self.refresh(database, true),
             Err(error) => self.error = Some(error),
         }
@@ -170,7 +176,7 @@ impl App {
             return;
         }
         let now = now_millis();
-        match database.load(self.range.since(now), now) {
+        match database.load(self.range.since(now), now, self.view) {
             Ok(data) => {
                 self.model = Model::new(data);
                 self.data_version = Some(version);
@@ -182,6 +188,90 @@ impl App {
             }
             Err(error) => self.error = Some(error),
         }
+    }
+
+    /// There's something to tell apart: more than one account in the database
+    pub fn several_accounts(&self) -> bool {
+        self.model.data.names.len() > 1
+    }
+
+    /// The accounts are added up on the screen, the managers of each next to each other
+    fn together(&self) -> bool {
+        self.view.is_none() && self.several_accounts()
+    }
+
+    /// What's before a manager in the tables when the accounts are together: "alice·"
+    pub fn account_tag(&self, key: ManagerKey) -> String {
+        if !self.together() {
+            return String::new();
+        }
+        let name = self
+            .model
+            .data
+            .names
+            .iter()
+            .find(|(id, _)| *id == account_of(key))
+            .map_or("?", |(_, name)| name.as_str());
+        let short: String = name.chars().take(ACCOUNT_TAG).collect();
+        format!("{short}·")
+    }
+
+    /// The manager, as the tables name it: "#7", "alice·#7" when the accounts are together
+    pub fn manager_name(&self, key: ManagerKey) -> String {
+        format!("{}#{}", self.account_tag(key), manager_number(key))
+    }
+
+    /// What the account tags add to the width of the columns of the managers
+    pub fn tag_width(&self) -> u16 {
+        if !self.together() {
+            return 0;
+        }
+        let longest = self
+            .model
+            .data
+            .names
+            .iter()
+            .map(|(_, name)| name.chars().count().min(ACCOUNT_TAG))
+            .max()
+            .unwrap_or_default();
+        longest as u16 + 1
+    }
+
+    /// The name of what's shown, when there's something to tell apart
+    pub fn view_name(&self) -> Option<String> {
+        if !self.several_accounts() {
+            return None;
+        }
+        let names = &self.model.data.names;
+        Some(match self.view {
+            None => format!("ALL ACCOUNTS · {}", names.len()),
+            Some(view) => {
+                let index = names.iter().position(|(id, _)| *id == view);
+                format!(
+                    "{} · {}/{}",
+                    index.map_or("?".to_string(), |it| names[it].1.to_uppercase()),
+                    index.map_or(0, |it| it + 1),
+                    names.len()
+                )
+            }
+        })
+    }
+
+    /// The next one, in a circle: all of them added up, the first account, the second…
+    fn next_view(&mut self) {
+        let names = &self.model.data.names;
+        self.view = match self.view {
+            None => names.first().map(|(id, _)| *id),
+            Some(view) => names
+                .iter()
+                .position(|(id, _)| *id == view)
+                .and_then(|it| names.get(it + 1))
+                .map(|(id, _)| *id),
+        };
+        self.cursor = 0;
+        self.drilled = false;
+        self.orders_row = 0;
+        self.tape_row = 0;
     }
 
     /// Milliseconds since the start, for the animations
@@ -198,7 +288,7 @@ impl App {
         self.drilled.then(|| self.selected()).flatten()
     }
 
-    fn shown(&self, manager_id: i32) -> bool {
+    fn shown(&self, manager_id: ManagerKey) -> bool {
         self.focus().is_none_or(|it| it.id == manager_id)
     }
 
@@ -226,7 +316,7 @@ impl App {
     }
 
     /// The managers the charts are about
-    pub fn charted(&self) -> Vec<i32> {
+    pub fn charted(&self) -> Vec<ManagerKey> {
         match self.focus() {
             Some(manager) => vec![manager.id],
             None => {
@@ -282,6 +372,10 @@ impl App {
             KeyCode::Char('o') => {
                 self.open_only = !self.open_only;
                 self.orders_row = 0;
+            }
+            KeyCode::Char('a') if self.several_accounts() => {
+                self.next_view();
+                reload = true;
             }
             KeyCode::Char('r') => reload = true,
             KeyCode::Char('t') => self.tick_asked = true,

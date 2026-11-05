@@ -98,7 +98,8 @@ pub fn render_managers(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     // the trend takes what the other columns leave, the open order 15 wide
-    let spark = area.width.saturating_sub(113).clamp(6, 40) as usize;
+    let tag_width = app.tag_width();
+    let spark = area.width.saturating_sub(113 + tag_width).clamp(6, 40) as usize;
     let rows: Vec<Row> = model
         .data
         .managers
@@ -109,12 +110,13 @@ pub fn render_managers(frame: &mut Frame, app: &App, area: Rect) {
             let last = to_f64(manager.last_price);
             let (base, _) = crate::stats::split(&manager.pair);
 
+            let (tag, number) = (app.account_tag(manager.id), manager.number());
             let id = match (manager.template_id, deleted) {
-                (Some(_), true) => Span::styled(format!("✕{}", manager.id), theme::faint()),
+                (Some(_), true) => Span::styled(format!("{tag}✕{number}"), theme::faint()),
                 (Some(_), false) => {
-                    Span::styled(format!("◇{}", manager.id), Style::new().fg(VIOLET))
+                    Span::styled(format!("{tag}◇{number}"), Style::new().fg(VIOLET))
                 }
-                (None, _) => Span::styled(format!("#{}", manager.id), theme::bold(TEXT)),
+                (None, _) => Span::styled(format!("{tag}#{number}"), theme::bold(TEXT)),
             };
             let mode = if manager.mode == "closing" {
                 Span::styled("◐", Style::new().fg(GOLD))
@@ -215,7 +217,7 @@ pub fn render_managers(frame: &mut Frame, app: &App, area: Rect) {
         .collect();
 
     let widths = [
-        Constraint::Length(10),
+        Constraint::Length(10 + tag_width),
         Constraint::Length(8),
         Constraint::Length(10),
         Constraint::Length(8),
@@ -343,7 +345,7 @@ pub fn render_orders(frame: &mut Frame, app: &App, area: Rect) {
                     format::stamp((order.open_time * 1000.0) as i64),
                     theme::dim(),
                 ),
-                left(format!("#{}", order.manager_id), theme::text()),
+                left(app.manager_name(order.manager_id), theme::text()),
                 left(name, theme::bold(color)),
                 left(canonical(&order.pair), Style::new().fg(AMBER)),
                 right(format::price(price), theme::bold(TEXT)),
@@ -379,7 +381,7 @@ pub fn render_orders(frame: &mut Frame, app: &App, area: Rect) {
     let widths = without(
         vec![
             Constraint::Length(11),
-            Constraint::Length(8),
+            Constraint::Length(8 + app.tag_width()),
             Constraint::Length(4),
             Constraint::Length(7),
             Constraint::Length(9),
@@ -626,7 +628,7 @@ pub fn render_tape(frame: &mut Frame, app: &App, area: Rect) {
                     },
                     theme::dim(),
                 ),
-                left(format!("#{}", action.manager_id), theme::text()),
+                left(app.manager_name(action.manager_id), theme::text()),
                 Cell::from(kind),
                 Cell::from(detail),
             ])
@@ -634,7 +636,7 @@ pub fn render_tape(frame: &mut Frame, app: &App, area: Rect) {
         .collect();
     let widths = [
         Constraint::Length(if narrow { 5 } else { 11 }),
-        Constraint::Length(8),
+        Constraint::Length(8 + app.tag_width()),
         Constraint::Length(5),
         Constraint::Fill(1),
     ];

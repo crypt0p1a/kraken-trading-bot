@@ -19,7 +19,7 @@ use crate::app::{App, Range, now_millis};
 use crate::data::{percent, to_f64};
 use crate::format;
 use crate::stats::Totals;
-use crate::theme::{self, AMBER, BACKGROUND, DIM, DOWN, GOLD, TEXT, UP};
+use crate::theme::{self, AMBER, BACKGROUND, DIM, DOWN, GOLD, TEXT, UP, VIOLET};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -138,10 +138,21 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
         Some(false) => Span::styled(" ◌ DRY RUN ", Style::new().fg(Color::Black).bg(GOLD).bold()),
         None => Span::styled(" NO ORDER YET ", theme::dim()),
     });
+    if let Some(name) = app.view_name() {
+        left.push(Span::raw(" "));
+        left.push(Span::styled(
+            format!(" ▣ {name} "),
+            Style::new().fg(Color::Black).bg(VIOLET).bold(),
+        ));
+    }
     if let Some(manager) = app.focus() {
         left.push(Span::raw("  "));
         left.push(Span::styled(
-            format!(" ▸ MANAGER #{} · {} ", manager.id, manager.pair),
+            format!(
+                " ▸ MANAGER {} · {} ",
+                app.manager_name(manager.id),
+                manager.pair
+            ),
             Style::new().fg(Color::Black).bg(theme::CYAN).bold(),
         ));
     }
@@ -490,6 +501,9 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
     .into_iter()
     .flatten()
     .collect();
+    if app.several_accounts() {
+        spans.splice(0..0, key("a", "ACCOUNT"));
+    }
     spans.extend(ranges);
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 
@@ -524,6 +538,10 @@ fn render_help(frame: &mut Frame, area: Rect) {
             "the chart at the top, in the middle, at the bottom: P&L, portfolio, price, sells, if the market moves",
         ),
         ("1 … 5", "range of the charts: 1H 24H 7D 30D ALL"),
+        (
+            "a",
+            "next account, in a circle: all of them added up, then each one",
+        ),
         ("o", "only the open orders"),
         ("i", "the idle decisions in the tape"),
         ("r", "read the database again"),

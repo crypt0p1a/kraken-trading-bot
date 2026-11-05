@@ -1,7 +1,9 @@
 //! What the dashboard computes from the data of the bot: the P&L realized by the sells, the
 //! totals by quote currency, the P&L over time, the pair of each manager
 
-use crate::data::{Account, Data, Manager, Market, Order, Side, Snapshot, percent, to_f64};
+use crate::data::{
+    Account, Data, Manager, ManagerKey, Market, Order, Side, Snapshot, percent, to_f64,
+};
 use rust_decimal::Decimal;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -48,7 +50,7 @@ pub fn split(pair: &str) -> (String, String) {
 /// A sell, and what it earned against what its base cost
 #[derive(Debug, Clone, PartialEq)]
 pub struct Trade {
-    pub manager_id: i32,
+    pub manager_id: ManagerKey,
     /// UTC seconds of the sell
     pub at: f64,
     pub pnl: Decimal,
@@ -200,11 +202,11 @@ impl Totals {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Model {
     pub data: Data,
-    pub performances: HashMap<i32, Performance>,
+    pub performances: HashMap<ManagerKey, Performance>,
     /// The quote currency of each manager
-    pub quotes: HashMap<i32, String>,
+    pub quotes: HashMap<ManagerKey, String>,
     /// The index in `data.markets` of the pair of each manager
-    pub markets: HashMap<i32, usize>,
+    pub markets: HashMap<ManagerKey, usize>,
     /// By quote, the one with the most budget first
     pub totals: Vec<Totals>,
     /// The sells of every manager, oldest first
@@ -213,16 +215,16 @@ pub struct Model {
 
 impl Model {
     pub fn new(data: Data) -> Self {
-        let mut by_manager: HashMap<i32, Vec<&Order>> = HashMap::new();
+        let mut by_manager: HashMap<ManagerKey, Vec<&Order>> = HashMap::new();
         for order in &data.orders {
             by_manager.entry(order.manager_id).or_default().push(order);
         }
-        let performances: HashMap<i32, Performance> = by_manager
+        let performances: HashMap<ManagerKey, Performance> = by_manager
             .iter()
             .map(|(id, orders)| (*id, performance(orders)))
             .collect();
 
-        let quotes: HashMap<i32, String> = data
+        let quotes: HashMap<ManagerKey, String> = data
             .managers
             .iter()
             .map(|it| (it.id, split(&it.pair).1))
@@ -248,7 +250,7 @@ impl Model {
             trades,
         };
 
-        let mut by_quote: BTreeMap<&str, Vec<i32>> = BTreeMap::new();
+        let mut by_quote: BTreeMap<&str, Vec<ManagerKey>> = BTreeMap::new();
         for manager in &model.data.managers {
             by_quote
                 .entry(model.quotes[&manager.id].as_str())
@@ -265,7 +267,7 @@ impl Model {
     }
 
     /// The managers of `ids` together, all of one quote currency
-    pub fn totals_of(&self, ids: &[i32]) -> Totals {
+    pub fn totals_of(&self, ids: &[ManagerKey]) -> Totals {
         let mut total = Totals::default();
         for manager in self.data.managers.iter().filter(|it| ids.contains(&it.id)) {
             total.quote.clone_from(&self.quotes[&manager.id]);
@@ -286,11 +288,11 @@ impl Model {
         total
     }
 
-    pub fn manager(&self, id: i32) -> Option<&Manager> {
+    pub fn manager(&self, id: ManagerKey) -> Option<&Manager> {
         self.data.managers.iter().find(|it| it.id == id)
     }
 
-    pub fn market_of(&self, id: i32) -> Option<&Market> {
+    pub fn market_of(&self, id: ManagerKey) -> Option<&Market> {
         self.markets
             .get(&id)
             .map(|index| &self.data.markets[*index])
@@ -313,7 +315,7 @@ impl Model {
     }
 
     /// What the sells of these managers earned per day, since their first order
-    pub fn realized_per_day(&self, ids: &[i32], now: i64) -> f64 {
+    pub fn realized_per_day(&self, ids: &[ManagerKey], now: i64) -> f64 {
         let first = self
             .data
             .orders
@@ -331,7 +333,7 @@ impl Model {
     /// The portfolio of these managers, and of the account when given, for each move of the market.
     /// One move at once, from the last prices: what the bot would place next isn't played. A cash
     /// no manager owns stays as it is, a base no manager owns moves with the market
-    pub fn scenarios(&self, ids: &[i32], account: Option<&Account>) -> Vec<Scenario> {
+    pub fn scenarios(&self, ids: &[ManagerKey], account: Option<&Account>) -> Vec<Scenario> {
         let totals = self.totals_of(ids);
         let (rest, held_outside) = account.map_or((Decimal::ZERO, Decimal::ZERO), |it| {
             (
@@ -397,7 +399,7 @@ impl Model {
     }
 
     /// What the manager was worth over the range, oldest first
-    pub fn manager_series(&self, id: i32) -> Vec<(f64, f64)> {
+    pub fn manager_series(&self, id: ManagerKey) -> Vec<(f64, f64)> {
         self.data
             .snapshots
             .iter()
@@ -414,7 +416,7 @@ impl Model {
             .find(|it| asset(&it.quote) == quote)
     }
 
-    pub fn open_orders_of(&self, id: i32) -> impl Iterator<Item = &Order> {
+    pub fn open_orders_of(&self, id: ManagerKey) -> impl Iterator<Item = &Order> {
         self.data
             .orders
             .iter()
@@ -422,7 +424,7 @@ impl Model {
     }
 
     /// The last values of a manager, oldest first, for its sparkline
-    pub fn values_of(&self, id: i32) -> Vec<f64> {
+    pub fn values_of(&self, id: ManagerKey) -> Vec<f64> {
         self.data
             .snapshots
             .iter()
@@ -432,8 +434,8 @@ impl Model {
     }
 
     /// The P&L over time of the managers of `ids`: (UTC milliseconds, quote)
-    pub fn pnl_series(&self, ids: &[i32]) -> Vec<(f64, f64)> {
-        let budgets: HashMap<i32, f64> = self
+    pub fn pnl_series(&self, ids: &[ManagerKey]) -> Vec<(f64, f64)> {
+        let budgets: HashMap<ManagerKey, f64> = self
             .data
             .managers
             .iter()
@@ -461,12 +463,12 @@ fn market_of(manager: &Manager, markets: &[Market]) -> Option<usize> {
 
 /// Sums the P&L of the managers at each time: a manager counts from its first point, with its last
 /// value known since
-pub fn pnl_series(snapshots: &[&Snapshot], budgets: &HashMap<i32, f64>) -> Vec<(f64, f64)> {
+pub fn pnl_series(snapshots: &[&Snapshot], budgets: &HashMap<ManagerKey, f64>) -> Vec<(f64, f64)> {
     // the managers of a tick are saved a few milliseconds apart: together, they're one point
     const TICK: i64 = 5_000;
     let times: BTreeSet<i64> = snapshots.iter().map(|it| it.at / TICK).collect();
 
-    let mut last: HashMap<i32, f64> = HashMap::new();
+    let mut last: HashMap<ManagerKey, f64> = HashMap::new();
     let mut index = 0;
     let mut sorted = snapshots.to_vec();
     sorted.sort_by_key(|it| it.at);

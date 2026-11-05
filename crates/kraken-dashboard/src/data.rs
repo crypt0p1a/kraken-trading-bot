@@ -6,7 +6,7 @@
 
 use rusqlite::{Connection, OpenFlags, OptionalExtension, Row, params};
 use rust_decimal::Decimal;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::str::FromStr;
 
@@ -24,6 +24,20 @@ pub const POINTS: i64 = 480;
 const ACTIONS: usize = 300;
 const IDLE_ACTIONS: usize = 100;
 
+/// A manager among those of every account: the same id runs on each of them. The key of the first
+/// account is the id itself
+pub type ManagerKey = i64;
+
+/// The id of the manager in its account, as the YAML file and Kraken name it
+pub fn manager_number(key: ManagerKey) -> i32 {
+    key as i32
+}
+
+/// The id of the account of the manager
+pub fn account_of(key: ManagerKey) -> i64 {
+    (key >> 32) + 1
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Side {
     Buy,
@@ -33,7 +47,7 @@ pub enum Side {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Order {
     pub txid: String,
-    pub manager_id: i32,
+    pub manager_id: ManagerKey,
     /// Alternate name of the pair, e.g. "XBTUSD"
     pub pair: String,
     pub side: Side,
@@ -66,7 +80,7 @@ impl Order {
 /// The last state of a manager, saved by the bot at each tick
 #[derive(Debug, Clone, PartialEq)]
 pub struct Manager {
-    pub id: i32,
+    pub id: ManagerKey,
     /// The pair as configured, e.g. "XBTUSD", "XBT/USD" or "XXBTZUSD"
     pub pair: String,
     pub budget: Decimal,
@@ -92,6 +106,11 @@ pub struct Manager {
 }
 
 impl Manager {
+    /// The id of the manager in its account
+    pub fn number(&self) -> i32 {
+        manager_number(self.id)
+    }
+
     pub fn base(&self) -> Decimal {
         self.base_available + self.base_in_sell_order
     }
@@ -118,7 +137,7 @@ impl Manager {
 /// A point of the history of a manager
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Snapshot {
-    pub manager_id: i32,
+    pub manager_id: ManagerKey,
     /// UTC milliseconds
     pub at: i64,
     pub value: f64,
@@ -127,7 +146,7 @@ pub struct Snapshot {
 /// A decision of a manager, and what came of it
 #[derive(Debug, Clone, PartialEq)]
 pub struct Action {
-    pub manager_id: i32,
+    pub manager_id: ManagerKey,
     /// UTC milliseconds
     pub at: i64,
     /// buy, sell, idle, buy_cancelled, virtual_created, virtual_deleted…
@@ -229,6 +248,9 @@ pub struct Data {
     /// The state of the tick asked for from here: "idle", "refresh" (asked for), "pending" (under
     /// way). None for the databases older than it
     pub forced_tick: Option<String>,
+    /// The Kraken accounts of the bot, whatever is shown: (id, name). Empty for the databases older
+    /// than them
+    pub names: Vec<(i64, String)>,
     /// Version of the schema of the bot
     pub version: usize,
     /// Start of the range, UTC milliseconds
@@ -303,8 +325,39 @@ impl Database {
             .map_err(sql)
     }
 
-    /// Reads everything, the series from `since` (UTC milliseconds, 0 for all) to `now`
-    pub fn load(&self, since: i64, now: i64) -> Result<Data> {
+    /// The accounts are in the database, the older ones have a single, implicit one
+    fn has_accounts(&self) -> bool {
+        self.tables.contains("accounts")
+    }
+
+    /// The condition of the rows of the account, every row without one
+    fn only(&self, account: Option<i64>) -> String {
+        self.only_in("account", account)
+    }
+
+    fn only_in(&self, column: &str, account: Option<i64>) -> String {
+        match account {
+            Some(id) if self.has_accounts() => format!("{column} = {id}"),
+            _ => "1 = 1".into(),
+        }
+    }
+
+    /// The key of a manager from the column of its account and of its id: see [`ManagerKey`]
+    fn key_of(&self, account: &str, id: &str) -> String {
+        if self.has_accounts() {
+            format!("(({account} - 1) << 32) | {id}")
+        } else {
+            id.into()
+        }
+    }
+
+    fn key(&self) -> String {
+        self.key_of("account", "manager_id")
+    }
+
+    /// Reads everything of the account, or of all of them added up when None, the series from
+    /// `since` (UTC milliseconds, 0 for all) to `now`
+    pub fn load(&self, since: i64, now: i64, account: Option<i64>) -> Result<Data> {
         // a single read transaction: a tick of the bot is seen whole, or not at all
         let transaction = self.connection.unchecked_transaction().map_err(sql)?;
 
@@ -312,24 +365,30 @@ impl Database {
             since
         } else {
             transaction
-                .query_row("SELECT MIN(at) FROM manager_snapshots", [], |row| {
-                    row.get::<_, Option<i64>>(0)
-                })
+                .query_row(
+                    &format!(
+                        "SELECT MIN(at) FROM manager_snapshots WHERE {}",
+                        self.only(account)
+                    ),
+                    [],
+                    |row| row.get::<_, Option<i64>>(0),
+                )
                 .map_err(sql)?
                 .unwrap_or(now)
         };
         let bucket = ((now - start) / POINTS).max(1);
 
         let data = Data {
-            managers: self.managers().map_err(sql)?,
-            orders: self.orders().map_err(sql)?,
-            snapshots: self.snapshots(start, bucket).map_err(sql)?,
-            actions: self.actions().map_err(sql)?,
-            dry_run: self.dry_run().map_err(sql)?,
-            forced_tick: self.forced_tick().map_err(sql)?,
+            managers: self.managers(account).map_err(sql)?,
+            orders: self.orders(account).map_err(sql)?,
+            snapshots: self.snapshots(account, start, bucket).map_err(sql)?,
+            actions: self.actions(account).map_err(sql)?,
+            dry_run: self.dry_run(account).map_err(sql)?,
+            forced_tick: self.forced_tick(account).map_err(sql)?,
             markets: self.markets(start, bucket).map_err(sql)?,
-            accounts: self.accounts().map_err(sql)?,
-            account_series: self.account_series(start, bucket).map_err(sql)?,
+            accounts: self.accounts(account).map_err(sql)?,
+            account_series: self.account_series(account, start, bucket).map_err(sql)?,
+            names: self.names().map_err(sql)?,
             version: self.version,
             since: start,
         };
@@ -337,22 +396,40 @@ impl Database {
         Ok(data)
     }
 
-    fn forced_tick(&self) -> rusqlite::Result<Option<String>> {
+    fn names(&self) -> rusqlite::Result<Vec<(i64, String)>> {
+        if !self.has_accounts() {
+            return Ok(Vec::new());
+        }
+        let mut statement = self
+            .connection
+            .prepare_cached("SELECT id, name FROM accounts ORDER BY id")?;
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect()
+    }
+
+    /// The state of the tick: of several accounts, the one furthest along
+    fn forced_tick(&self, account: Option<i64>) -> rusqlite::Result<Option<String>> {
         if !self.tables.contains("commands") {
             return Ok(None);
         }
         self.connection
             .query_row(
-                "SELECT state FROM commands WHERE key = 'forced_tick'",
+                &format!(
+                    "SELECT state FROM commands WHERE key = 'forced_tick' AND {}
+                     ORDER BY CASE state WHEN 'pending' THEN 0 WHEN 'refresh' THEN 1 ELSE 2 END
+                     LIMIT 1",
+                    self.only(account)
+                ),
                 [],
                 |row| row.get(0),
             )
             .optional()
     }
 
-    /// Asks the bot for a tick now, rather than at the end of its interval: the only write of the
-    /// dashboard, through a connection of its own. Nothing changes while a tick is under way
-    pub fn request_tick(&self, at: i64) -> Result<()> {
+    /// Asks the bot for a tick of the account now, of all of them when None, rather than at the end
+    /// of its interval: the only write of the dashboard, through a connection of its own. Nothing
+    /// changes while a tick is under way
+    pub fn request_tick(&self, at: i64, account: Option<i64>) -> Result<()> {
         if !self.tables.contains("commands") {
             return Err("this bot can't be asked for a tick: update it".into());
         }
@@ -366,22 +443,33 @@ impl Database {
             .map_err(sql)?;
         connection
             .execute(
-                "UPDATE commands SET state = 'refresh', updated_at = ?1
-                 WHERE key = 'forced_tick' AND state <> 'pending'",
+                &format!(
+                    "UPDATE commands SET state = 'refresh', updated_at = ?1
+                     WHERE key = 'forced_tick' AND state <> 'pending' AND {}",
+                    self.only(account)
+                ),
                 [at],
             )
             .map_err(sql)?;
         Ok(())
     }
 
-    fn accounts(&self) -> rusqlite::Result<Vec<Account>> {
+    /// The last value of each account, added up per quote
+    fn accounts(&self, account: Option<i64>) -> rusqlite::Result<Vec<Account>> {
         if !self.tables.contains("account_snapshots") {
             return Ok(Vec::new());
         }
-        let mut statement = self.connection.prepare_cached(
-            "SELECT quote, at, cash, holdings FROM account_snapshots
-             WHERE at = (SELECT MAX(at) FROM account_snapshots) ORDER BY quote",
-        )?;
+        let same_account = if self.has_accounts() {
+            "WHERE other.account = it.account"
+        } else {
+            ""
+        };
+        let mut statement = self.connection.prepare_cached(&format!(
+            "SELECT quote, at, cash, holdings FROM account_snapshots it
+             WHERE {} AND at = (SELECT MAX(at) FROM account_snapshots other {same_account})
+             ORDER BY quote",
+            self.only(account)
+        ))?;
         let rows = statement.query_map([], |row| {
             Ok(Account {
                 quote: row.get(0)?,
@@ -390,45 +478,74 @@ impl Database {
                 holdings: decimal(row, 3)?,
             })
         })?;
-        rows.collect()
+        let mut total: Vec<Account> = Vec::new();
+        for row in rows {
+            let row = row?;
+            match total.last_mut().filter(|it| it.quote == row.quote) {
+                Some(it) => {
+                    it.at = it.at.max(row.at);
+                    it.cash += row.cash;
+                    it.holdings += row.holdings;
+                }
+                None => total.push(row),
+            }
+        }
+        Ok(total)
     }
 
-    fn account_series(&self, since: i64, bucket: i64) -> rusqlite::Result<Vec<AccountPoint>> {
+    fn account_series(
+        &self,
+        account: Option<i64>,
+        since: i64,
+        bucket: i64,
+    ) -> rusqlite::Result<Vec<AccountPoint>> {
         if !self.tables.contains("account_snapshots") {
             return Ok(Vec::new());
         }
         // the bare columns of SQLite: the amounts come from the row of MAX(at)
-        let mut statement = self.connection.prepare_cached(
-            "SELECT quote, MAX(at), CAST(cash AS REAL) + CAST(holdings AS REAL)
-             FROM account_snapshots WHERE at >= ?1 GROUP BY quote, at / ?2 ORDER BY 2",
-        )?;
+        let id = if self.has_accounts() { "account" } else { "1" };
+        let mut statement = self.connection.prepare_cached(&format!(
+            "SELECT {id}, quote, MAX(at), CAST(cash AS REAL) + CAST(holdings AS REAL)
+             FROM account_snapshots WHERE {} AND at >= ?1 GROUP BY {id}, quote, at / ?2 ORDER BY 3",
+            self.only(account)
+        ))?;
         let rows = statement.query_map(params![since, bucket], |row| {
-            Ok(AccountPoint {
-                quote: row.get(0)?,
-                at: row.get(1)?,
-                value: row.get(2)?,
+            Ok(AccountRow {
+                account: row.get(0)?,
+                quote: row.get(1)?,
+                at: row.get(2)?,
+                value: row.get(3)?,
             })
         })?;
-        rows.collect()
+        Ok(added_up(
+            &rows.collect::<rusqlite::Result<Vec<_>>>()?,
+            bucket,
+        ))
     }
 
-    fn managers(&self) -> rusqlite::Result<Vec<Manager>> {
+    fn managers(&self, account: Option<i64>) -> rusqlite::Result<Vec<Manager>> {
         let virtuals = self.tables.contains("virtual_managers");
         let query = format!(
-            "SELECT m.id, m.pair, m.budget, m.buy_below, m.sell_above, m.mode, m.quote_available,
+            "SELECT {}, m.pair, m.budget, m.buy_below, m.sell_above, m.mode, m.quote_available,
                 m.quote_in_buy_order, m.base_available, m.base_in_sell_order, m.position_cost,
                 m.entry_price, m.last_price, m.value, m.first_seen, m.updated_at, {}
-             FROM managers m {} ORDER BY m.id",
+             FROM managers m {} WHERE {} ORDER BY 1",
+            self.key_of("m.account", "m.id"),
             if virtuals {
                 "v.template_id, v.deleted_at"
             } else {
                 "NULL, NULL"
             },
             if virtuals {
-                "LEFT JOIN virtual_managers v ON v.id = m.id"
+                if self.has_accounts() {
+                    "LEFT JOIN virtual_managers v ON v.id = m.id AND v.account = m.account"
+                } else {
+                    "LEFT JOIN virtual_managers v ON v.id = m.id"
+                }
             } else {
                 ""
             },
+            self.only_in("m.account", account),
         );
         let mut statement = self.connection.prepare_cached(&query)?;
         let rows = statement.query_map([], |row| {
@@ -456,12 +573,14 @@ impl Database {
         rows.collect()
     }
 
-    fn orders(&self) -> rusqlite::Result<Vec<Order>> {
-        let mut statement = self.connection.prepare_cached(
-            "SELECT txid, manager_id, pair, side, status, is_final, volume, volume_executed, cost,
+    fn orders(&self, account: Option<i64>) -> rusqlite::Result<Vec<Order>> {
+        let mut statement = self.connection.prepare_cached(&format!(
+            "SELECT txid, {}, pair, side, status, is_final, volume, volume_executed, cost,
                 fee, limit_price, average_price, open_time, close_time
-             FROM orders ORDER BY open_time, txid",
-        )?;
+             FROM orders WHERE {} ORDER BY open_time, txid",
+            self.key(),
+            self.only(account)
+        ))?;
         let rows = statement.query_map([], |row| {
             Ok(Order {
                 txid: row.get(0)?,
@@ -487,12 +606,19 @@ impl Database {
         rows.collect()
     }
 
-    fn snapshots(&self, since: i64, bucket: i64) -> rusqlite::Result<Vec<Snapshot>> {
+    fn snapshots(
+        &self,
+        account: Option<i64>,
+        since: i64,
+        bucket: i64,
+    ) -> rusqlite::Result<Vec<Snapshot>> {
         // the bare column of SQLite: `value` comes from the row of MAX(at)
-        let mut statement = self.connection.prepare_cached(
-            "SELECT manager_id, MAX(at), CAST(value AS REAL) FROM manager_snapshots
-             WHERE at >= ?1 GROUP BY manager_id, at / ?2 ORDER BY 2",
-        )?;
+        let mut statement = self.connection.prepare_cached(&format!(
+            "SELECT {}, MAX(at), CAST(value AS REAL) FROM manager_snapshots
+             WHERE {} AND at >= ?1 GROUP BY 1, at / ?2 ORDER BY 2",
+            self.key(),
+            self.only(account)
+        ))?;
         let rows = statement.query_map(params![since, bucket], |row| {
             Ok(Snapshot {
                 manager_id: row.get(0)?,
@@ -503,17 +629,19 @@ impl Database {
         rows.collect()
     }
 
-    fn actions(&self) -> rusqlite::Result<Vec<Action>> {
-        let mut actions = self.actions_where("kind != 'idle'", ACTIONS)?;
-        actions.extend(self.actions_where("kind = 'idle'", IDLE_ACTIONS)?);
+    fn actions(&self, account: Option<i64>) -> rusqlite::Result<Vec<Action>> {
+        let only = self.only(account);
+        let mut actions = self.actions_where(&format!("{only} AND kind != 'idle'"), ACTIONS)?;
+        actions.extend(self.actions_where(&format!("{only} AND kind = 'idle'"), IDLE_ACTIONS)?);
         actions.sort_by_key(|it| std::cmp::Reverse(it.at));
         Ok(actions)
     }
 
     fn actions_where(&self, condition: &str, limit: usize) -> rusqlite::Result<Vec<Action>> {
         let mut statement = self.connection.prepare_cached(&format!(
-            "SELECT manager_id, at, kind, amount, price, reason, dry_run, txid, error FROM actions
-             WHERE {condition} ORDER BY at DESC, id DESC LIMIT ?1"
+            "SELECT {}, at, kind, amount, price, reason, dry_run, txid, error FROM actions
+             WHERE {condition} ORDER BY at DESC, id DESC LIMIT ?1",
+            self.key(),
         ))?;
         let rows = statement.query_map([limit as i64], |row| {
             Ok(Action {
@@ -531,12 +659,15 @@ impl Database {
         rows.collect()
     }
 
-    fn dry_run(&self) -> rusqlite::Result<Option<bool>> {
+    fn dry_run(&self, account: Option<i64>) -> rusqlite::Result<Option<bool>> {
         use rusqlite::OptionalExtension;
         self.connection
             .query_row(
-                "SELECT dry_run FROM actions WHERE kind IN ('buy', 'sell')
-                 ORDER BY at DESC, id DESC LIMIT 1",
+                &format!(
+                    "SELECT dry_run FROM actions WHERE {} AND kind IN ('buy', 'sell')
+                     ORDER BY at DESC, id DESC LIMIT 1",
+                    self.only(account)
+                ),
                 [],
                 |row| row.get(0),
             )
@@ -600,6 +731,44 @@ impl Database {
     }
 }
 
+/// A point of the value of an account, before it's added to the others
+#[derive(Debug, Clone, PartialEq)]
+struct AccountRow {
+    account: i64,
+    quote: String,
+    at: i64,
+    value: f64,
+}
+
+/// What the accounts are worth together per bucket and quote, oldest first: the accounts don't tick
+/// at the same millisecond, so each counts for its last value known. The rows are sorted by time
+fn added_up(rows: &[AccountRow], bucket: i64) -> Vec<AccountPoint> {
+    let mut last: HashMap<(i64, &str), f64> = HashMap::new();
+    let mut points: Vec<AccountPoint> = Vec::new();
+    let mut indexes: HashMap<(&str, i64), usize> = HashMap::new();
+    for row in rows {
+        last.insert((row.account, &row.quote), row.value);
+        let value = last
+            .iter()
+            .filter(|((_, quote), _)| *quote == row.quote)
+            .map(|(_, value)| value)
+            .sum();
+        let index = *indexes
+            .entry((&row.quote, row.at / bucket))
+            .or_insert_with(|| {
+                points.push(AccountPoint {
+                    quote: row.quote.clone(),
+                    at: row.at,
+                    value,
+                });
+                points.len() - 1
+            });
+        points[index].at = row.at;
+        points[index].value = value;
+    }
+    points
+}
+
 fn invalid(index: usize, text: &str) -> rusqlite::Error {
     rusqlite::Error::FromSqlConversionFailure(
         index,
@@ -630,5 +799,45 @@ pub fn percent(part: Decimal, whole: Decimal) -> f64 {
         0.0
     } else {
         to_f64(part / whole * Decimal::ONE_HUNDRED)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(account: i64, at: i64, value: f64) -> AccountRow {
+        AccountRow {
+            account,
+            quote: "ZEUR".into(),
+            at,
+            value,
+        }
+    }
+
+    #[test]
+    fn adds_up_the_accounts_though_they_tick_apart() {
+        let points = added_up(
+            &[
+                row(1, 1_001, 100.0),
+                row(2, 1_002, 50.0),
+                row(1, 2_001, 110.0),
+                row(2, 3_002, 40.0),
+            ],
+            1_000,
+        );
+        let values: Vec<(i64, f64)> = points.iter().map(|it| (it.at, it.value)).collect();
+        // the first bucket with both, the second with the last value of the second account
+        assert_eq!(values, [(1_002, 150.0), (2_001, 160.0), (3_002, 150.0)]);
+    }
+
+    #[test]
+    fn splits_the_manager_keys() {
+        assert_eq!(manager_number(7), 7);
+        assert_eq!(account_of(7), 1);
+        let key = (2_i64 << 32) | 1_001_007;
+        assert_eq!(manager_number(key), 1_001_007);
+        assert_eq!(account_of(key), 3);
+        assert_eq!(manager_number((1_i64 << 32) | 2_147_483_647), 2_147_483_647);
     }
 }
