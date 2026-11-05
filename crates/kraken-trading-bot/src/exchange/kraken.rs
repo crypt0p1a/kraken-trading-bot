@@ -22,8 +22,22 @@ pub struct KrakenExchange {
 
 impl KrakenExchange {
     pub fn new(api_key: String, api_secret: String, options: RestOptions) -> ExchangeResult<Self> {
-        // shared: Kraken limits the calls per IP and per key
-        let limiter = Arc::new(RateLimiter::default());
+        Self::with_limiter(
+            api_key,
+            api_secret,
+            options,
+            Arc::new(RateLimiter::default()),
+        )
+    }
+
+    /// With the limiter of the other accounts of the same IP: Kraken limits the calls per IP and
+    /// per key
+    pub fn with_limiter(
+        api_key: String,
+        api_secret: String,
+        options: RestOptions,
+        limiter: Arc<RateLimiter>,
+    ) -> ExchangeResult<Self> {
         Ok(Self {
             public: PublicApi::new(options.clone(), limiter.clone())?,
             private: PrivateApi::new(api_key, api_secret, options, limiter)?,
