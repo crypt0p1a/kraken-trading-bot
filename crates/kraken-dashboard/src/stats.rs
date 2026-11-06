@@ -480,6 +480,19 @@ impl Model {
             .find(|it| asset(&it.quote) == quote)
     }
 
+    /// The quote of the account no open order holds: what can be spent right now
+    pub fn free_cash(&self, account: &Account) -> Decimal {
+        let quote = asset(&account.quote);
+        let in_buy_orders: Decimal = self
+            .data
+            .managers
+            .iter()
+            .filter(|it| self.quotes.get(&it.id).is_some_and(|it| it == quote))
+            .map(|it| it.quote_in_buy_order)
+            .sum();
+        (account.cash - in_buy_orders).max(Decimal::ZERO)
+    }
+
     pub fn open_orders_of(&self, id: ManagerKey) -> impl Iterator<Item = &Order> {
         self.data
             .orders

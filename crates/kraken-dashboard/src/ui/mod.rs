@@ -303,15 +303,26 @@ fn render_tiles(frame: &mut Frame, app: &App, area: Rect) {
         .flatten();
     let (name, value, mut detail) = match account {
         Some(account) => {
-            let free = to_f64(account.value() - totals.value);
+            let free = to_f64(app.model.free_cash(account));
+            // what the managers count on and the account doesn't have, first: a narrow tile cuts
+            // the end
+            let missing = to_f64(totals.value - account.value());
+            let first = if missing > 0.0 {
+                Span::styled(
+                    format!("missing {}", format::money(missing)),
+                    theme::bold(DOWN),
+                )
+            } else {
+                Span::styled(
+                    format!("mgrs {}", format::money(to_f64(totals.value))),
+                    theme::dim(),
+                )
+            };
             (
                 "PORTFOLIO",
                 account.value(),
                 vec![
-                    Span::styled(
-                        format!("mgrs {}", format::money(to_f64(totals.value))),
-                        theme::dim(),
-                    ),
+                    first,
                     Span::styled(
                         format!(" · free {}", format::money(free)),
                         Style::new().fg(if free >= 1.0 { theme::GOLD } else { theme::DIM }),

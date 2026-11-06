@@ -896,3 +896,44 @@ fn sorts_the_orders_and_the_tape_on_their_own() {
     assert!(screen(&app, 200, 50).contains("WHAT▲"));
     assert!(screen(&app, 200, 50).contains("MANAGER▲"));
 }
+
+#[test]
+fn tells_what_is_free_and_what_is_missing_in_the_account() {
+    let fixture = path("missing");
+    let storage = write(&fixture.path);
+    let (mut app, database) = app(&fixture.path);
+
+    // enough for the managers: what's free is what no open order holds
+    let account = app.model.account("USD").unwrap().clone();
+    let free = app.model.free_cash(&account);
+    let in_buy_orders: Decimal = app
+        .model
+        .data
+        .managers
+        .iter()
+        .map(|it| it.quote_in_buy_order)
+        .sum();
+    assert!(!in_buy_orders.is_zero());
+    assert_eq!(free, account.cash - in_buy_orders);
+    let text = screen(&app, 200, 50);
+    assert!(text.contains("mgrs "), "{text}");
+    assert!(text.contains(" · free "), "{text}");
+    assert!(!text.contains("missing"), "{text}");
+
+    // less than the managers count on, nothing free
+    storage
+        .record_account(&AccountRecord {
+            at: now_millis(),
+            quote: "ZUSD".into(),
+            cash: d("10"),
+            holdings: d("0"),
+        })
+        .unwrap();
+    app.refresh(&database, true);
+    let account = app.model.account("USD").unwrap().clone();
+    assert_eq!(app.model.free_cash(&account), d("0"));
+    let text = screen(&app, 200, 50);
+    assert!(text.contains("missing "), "{text}");
+    assert!(text.contains(" · free 0.00"), "{text}");
+    assert!(!text.contains("mgrs "), "{text}");
+}
