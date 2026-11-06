@@ -982,3 +982,60 @@ fn shows_what_the_portfolio_is_made_of() {
     assert!(text.contains("■XBT 30 "), "{text}");
     assert!(text.contains("■OTHER 70 "), "{text}");
 }
+
+#[test]
+fn goes_from_the_desk_to_every_chart_and_back() {
+    let fixture = path("all-charts");
+    let _storage = write(&fixture.path);
+    let (mut app, _database) = app(&fixture.path);
+    let charts = app.charts;
+    assert!(screen(&app, 200, 50).contains("MANAGERS"));
+
+    app.on_key(KeyEvent::from(KeyCode::Char('d')));
+    assert!(app.all_charts);
+    let text = screen(&app, 200, 50);
+    for title in [
+        "PORTFOLIO · USD",
+        "BY CRYPTO · USD",
+        "GROWTH",
+        "P&L",
+        "SELLS",
+        "IF THE MARKET MOVES · USD",
+        "XBTUSD · #1",
+    ] {
+        assert!(text.contains(title), "{title}: {text}");
+    }
+    assert!(!text.contains("MANAGERS"), "{text}");
+    assert!(!text.contains("TAPE"), "{text}");
+    assert!(text.contains("DESK"), "{text}");
+
+    // the arrows choose the manager of the price, whatever the panel; the keys of the desk do nothing
+    app.on_key(KeyEvent::from(KeyCode::Down));
+    assert_eq!(app.cursor, 1);
+    assert!(screen(&app, 200, 50).contains(" · #2"));
+    for key in ['c', 'v', 'b', 'o', 'i', 's'] {
+        app.on_key(KeyEvent::from(KeyCode::Char(key)));
+    }
+    app.on_key(KeyEvent::from(KeyCode::Tab));
+    assert_eq!(app.charts, charts);
+    assert!(!app.open_only && !app.show_idle);
+
+    // every size it's drawn on, without panicking
+    for (width, height) in [(100, 28), (120, 30), (160, 40), (300, 80)] {
+        assert!(screen(&app, width, height).contains("PORTFOLIO"));
+    }
+
+    // back with esc, or the same key; ctrl-c always quits
+    app.on_key(KeyEvent::from(KeyCode::Esc));
+    assert!(!app.all_charts);
+    assert!(screen(&app, 200, 50).contains("MANAGERS"));
+    app.on_key(KeyEvent::from(KeyCode::Char('d')));
+    app.on_key(KeyEvent::from(KeyCode::Char('d')));
+    assert!(!app.all_charts);
+    app.on_key(KeyEvent::from(KeyCode::Char('d')));
+    app.on_key(KeyEvent::new(
+        KeyCode::Char('c'),
+        ratatui::crossterm::event::KeyModifiers::CONTROL,
+    ));
+    assert!(app.quit);
+}

@@ -47,6 +47,18 @@ pub enum Chart {
 }
 
 impl Chart {
+    /// Every chart, in the order of the screen showing them all: the curves first, on the row with
+    /// the most room
+    pub const ALL: [Self; 7] = [
+        Self::Portfolio,
+        Self::Pnl,
+        Self::Price,
+        Self::Allocation,
+        Self::Growth,
+        Self::Trades,
+        Self::Scenarios,
+    ];
+
     fn next(self) -> Self {
         match self {
             Self::Pnl => Self::Portfolio,
@@ -134,6 +146,8 @@ pub struct App {
     pub panel: Panel,
     /// The charts of the column, from the top
     pub charts: [Chart; 3],
+    /// Every chart on the screen, instead of the desk
+    pub all_charts: bool,
     pub range: Range,
     /// The account shown, all of them added up when None
     pub view: Option<i64>,
@@ -166,6 +180,7 @@ impl App {
             drilled: false,
             panel: Panel::Managers,
             charts: [Chart::Portfolio, Chart::Scenarios, Chart::Price],
+            all_charts: false,
             range: Range::Day,
             view: None,
             orders_row: 0,
@@ -411,9 +426,25 @@ impl App {
             self.help = false;
             return false;
         }
+        // what's about the tables and the column of charts: none of them on this screen
+        if self.all_charts
+            && !key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(
+                key.code,
+                KeyCode::Tab
+                    | KeyCode::BackTab
+                    | KeyCode::Left
+                    | KeyCode::Right
+                    | KeyCode::Char('s' | 'c' | 'v' | 'b' | 'o' | 'i')
+            )
+        {
+            return false;
+        }
         let mut reload = false;
         match key.code {
             KeyCode::Char('q') => self.quit = true,
+            KeyCode::Char('d') => self.all_charts = !self.all_charts,
+            KeyCode::Esc if self.all_charts => self.all_charts = false,
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => self.quit = true,
             KeyCode::Char('?') | KeyCode::Char('h') => self.help = true,
             KeyCode::Tab => self.panel = self.panel.next(),
@@ -473,7 +504,13 @@ impl App {
     }
 
     fn scroll(&mut self, by: i64) {
-        let (row, count) = match self.panel {
+        // with every chart on the screen, the arrows choose the manager of the price
+        let panel = if self.all_charts {
+            Panel::Managers
+        } else {
+            self.panel
+        };
+        let (row, count) = match panel {
             Panel::Managers => (&mut self.cursor, self.model.data.managers.len()),
             Panel::Orders => {
                 let count = self.orders().len();
@@ -486,7 +523,7 @@ impl App {
         };
         let last = count.saturating_sub(1) as i64;
         *row = (*row as i64 + by).clamp(0, last) as usize;
-        if self.panel == Panel::Managers && self.drilled {
+        if panel == Panel::Managers && self.drilled {
             self.orders_row = 0;
             self.tape_row = 0;
         }

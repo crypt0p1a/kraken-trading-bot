@@ -98,12 +98,45 @@ fn level(since: i64, now: i64, value: f64) -> Vec<(f64, f64)> {
 /// The height each chart needs to be readable: fewer charts in a low terminal
 const CHART_HEIGHT: u16 = 12;
 
+/// What a chart wants on the screen with all of them, before they get narrower
+const GRID_CHART_WIDTH: u16 = 40;
+const GRID_CHART_HEIGHT: u16 = 9;
+/// However wide the screen: more would leave rows too low and charts too wide
+const GRID_COLUMNS: u16 = 4;
+
 /// The charts of the column, one above the other
 pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     let count = (area.height / CHART_HEIGHT).clamp(1, app.charts.len() as u16) as usize;
     let places = Layout::vertical(vec![Constraint::Fill(1); count]).split(area);
     for (place, chart) in places.iter().zip(app.charts) {
         render_chart(frame, app, *place, chart);
+    }
+}
+
+/// How many charts on each row of a screen of this size, the first rows having one less: the
+/// curves are first, and want the room
+fn grid(width: u16, height: u16, count: usize) -> Vec<usize> {
+    let columns = (width / GRID_CHART_WIDTH).clamp(1, GRID_COLUMNS) as usize;
+    let mut rows = count.div_ceil(columns);
+    // too low for that: narrower charts, on fewer rows
+    if height / (rows as u16) < GRID_CHART_HEIGHT {
+        rows = ((height / GRID_CHART_HEIGHT).max(1) as usize).min(count);
+    }
+    (0..rows)
+        .map(|row| count / rows + usize::from(row >= rows - count % rows))
+        .collect()
+}
+
+/// Every chart, on the whole area
+pub fn render_all(frame: &mut Frame, app: &App, area: Rect) {
+    let rows = grid(area.width, area.height, Chart::ALL.len());
+    let places = Layout::vertical(vec![Constraint::Fill(1); rows.len()]).split(area);
+    let mut charts = Chart::ALL.into_iter();
+    for (place, count) in places.iter().zip(rows) {
+        let columns = Layout::horizontal(vec![Constraint::Fill(1); count]).split(*place);
+        for (column, chart) in columns.iter().zip(charts.by_ref()) {
+            render_chart(frame, app, *column, chart);
+        }
     }
 }
 
@@ -985,6 +1018,25 @@ fn render_trades(frame: &mut Frame, app: &App, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lays_every_chart_out_for_the_size_of_the_screen() {
+        // wide, however wide: the three curves above the four others
+        assert_eq!(grid(160, 44, 7), [3, 4]);
+        assert_eq!(grid(200, 44, 7), [3, 4]);
+        assert_eq!(grid(300, 44, 7), [3, 4]);
+        // less wide: the fuller rows at the bottom
+        assert_eq!(grid(159, 44, 7), [2, 2, 3]);
+        assert_eq!(grid(100, 44, 7), [1, 2, 2, 2]);
+        // narrow and high: one above the other
+        assert_eq!(grid(39, 70, 7), [1; 7]);
+        // low: narrower charts rather than charts without room for a curve
+        assert_eq!(grid(100, 25, 7), [3, 4]);
+        // nothing lost, whatever the size
+        for (width, height) in [(100, 22), (120, 30), (200, 50), (400, 100), (1, 1)] {
+            assert_eq!(grid(width, height, 7).iter().sum::<usize>(), 7);
+        }
+    }
 
     #[test]
     fn puts_each_sell_at_its_time_and_merges_the_close_ones() {

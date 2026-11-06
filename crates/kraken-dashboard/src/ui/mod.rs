@@ -11,6 +11,8 @@
 //! │                        │┌TAPE──────────────┐┌XBTUSD · #1─────────────┐
 //!  q QUIT  tab PANEL  ↑↓ MOVE  ⏎ FOCUS  c CHART  1-5 RANGE …
 //! ```
+//!
+//! `d` replaces the key figures and the tables with every chart
 
 mod charts;
 mod panels;
@@ -65,6 +67,16 @@ pub fn render(frame: &mut Frame, app: &App) {
 
     render_header(frame, app, header);
     render_ticker_tape(frame, app, tape);
+
+    if app.all_charts {
+        charts::render_all(frame, app, tiles.union(body));
+        render_footer(frame, app, footer);
+        if app.help {
+            render_help(frame, area);
+        }
+        return;
+    }
+
     render_tiles(frame, app, tiles);
 
     // the tables on two thirds, the charts in a column on the last one
@@ -496,23 +508,35 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
-    let mut spans: Vec<Span> = [
-        key("q", "QUIT"),
-        key("tab", "PANEL"),
-        key("↑↓", "MOVE"),
-        key("←→ s", "SORT"),
-        key("⏎", if app.drilled { "ALL" } else { "FOCUS" }),
-        key("c v b", "CHARTS"),
-        key("o", if app.open_only { "ALL ORDERS" } else { "OPEN" }),
-        key("i", if app.show_idle { "HIDE IDLE" } else { "IDLE" }),
-        key("r", "RELOAD"),
-        key("t", "TICK"),
-        key("?", "HELP"),
-        key("1-5", "RANGE"),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
+    let keys: Vec<[Span; 2]> = if app.all_charts {
+        vec![
+            key("q", "QUIT"),
+            key("d", "DESK"),
+            key("↑↓", "MANAGER"),
+            key("⏎", if app.drilled { "ALL" } else { "FOCUS" }),
+            key("r", "RELOAD"),
+            key("t", "TICK"),
+            key("?", "HELP"),
+            key("1-5", "RANGE"),
+        ]
+    } else {
+        vec![
+            key("q", "QUIT"),
+            key("d", "ALL CHARTS"),
+            key("tab", "PANEL"),
+            key("↑↓", "MOVE"),
+            key("←→ s", "SORT"),
+            key("⏎", if app.drilled { "ALL" } else { "FOCUS" }),
+            key("c v b", "CHARTS"),
+            key("o", if app.open_only { "ALL ORDERS" } else { "OPEN" }),
+            key("i", if app.show_idle { "HIDE IDLE" } else { "IDLE" }),
+            key("r", "RELOAD"),
+            key("t", "TICK"),
+            key("?", "HELP"),
+            key("1-5", "RANGE"),
+        ]
+    };
+    let mut spans: Vec<Span> = keys.into_iter().flatten().collect();
     if app.several_accounts() {
         spans.splice(0..0, key("a", "ACCOUNT"));
     }
@@ -553,6 +577,7 @@ fn render_help(frame: &mut Frame, area: Rect) {
             "c v b",
             "the chart at the top, in the middle, at the bottom: P&L, portfolio, price, sells, if the market moves, growth, by crypto",
         ),
+        ("d", "every chart on the screen, d or esc back to the desk"),
         ("1 … 5", "range of the charts: 1H 24H 7D 30D ALL"),
         (
             "a",
