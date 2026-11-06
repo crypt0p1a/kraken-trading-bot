@@ -156,7 +156,8 @@ read-only in `/config`, the database lives in the `kraken-bot-data` volume (`/da
 compose stop` lets the tick in progress end.
 
 Without Docker: `cargo run --release -p kraken-trading-bot` (or `-- --once` for a single tick,
-`-- --check` to only check the configuration and the pairs).
+`-- --check` to only check the configuration, the pairs and the API keys: their permissions, none
+that withdraws. Nothing is placed).
 
 ## Dashboard
 

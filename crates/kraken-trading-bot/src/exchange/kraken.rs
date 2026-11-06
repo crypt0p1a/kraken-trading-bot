@@ -1,5 +1,5 @@
 use super::{Exchange, ExchangeResult};
-use kraken_api::account::{ExtendedBalance, TradeVolume};
+use kraken_api::account::{ApiKeyInfoRequest, ExtendedBalance, TradeVolume};
 use kraken_api::market::{
     AssetPair, Candle, CandleInterval, CandlesRequest, PublicTrade, RecentTradesRequest, Ticker,
 };
@@ -80,6 +80,14 @@ impl Exchange for KrakenExchange {
 
     async fn trade_volume(&self, pairs: &[String]) -> ExchangeResult<TradeVolume> {
         self.private.trade_volume(pairs).await
+    }
+
+    async fn key_permissions(&self) -> ExchangeResult<Vec<String>> {
+        let info = self
+            .private
+            .api_key_info(&ApiKeyInfoRequest::default())
+            .await?;
+        Ok(info.permissions)
     }
 
     async fn balances(&self) -> ExchangeResult<HashMap<String, ExtendedBalance>> {

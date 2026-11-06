@@ -43,6 +43,9 @@ pub trait Exchange {
     /// The fees of the pairs, keyed by Kraken name
     async fn trade_volume(&self, pairs: &[String]) -> ExchangeResult<TradeVolume>;
 
+    /// What the API key is allowed to do, e.g. "query-funds". Requires no permission
+    async fn key_permissions(&self) -> ExchangeResult<Vec<String>>;
+
     /// The balances of the account, keyed by asset
     async fn balances(&self) -> ExchangeResult<HashMap<String, ExtendedBalance>>;
 

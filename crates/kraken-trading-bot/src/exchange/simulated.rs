@@ -41,6 +41,12 @@ struct State {
     trades_error: Option<String>,
     /// The error every read of the open orders answers, when set
     open_orders_error: Option<String>,
+    /// What the API key is allowed to do
+    key_permissions: Vec<String>,
+    /// The error every read of the closed orders answers, when set
+    closed_orders_error: Option<String>,
+    /// The error every read of the permissions answers, when set: a refused key
+    key_error: Option<String>,
 }
 
 fn error(body: &str) -> KrakenError {
@@ -66,6 +72,11 @@ impl SimulatedExchange {
                 cancel_error: None,
                 trades_error: None,
                 open_orders_error: None,
+                key_permissions: ["query-funds", "query-open-trades", "modify-trades"]
+                    .map(str::to_string)
+                    .to_vec(),
+                closed_orders_error: None,
+                key_error: None,
             }),
         }
     }
@@ -253,6 +264,20 @@ impl SimulatedExchange {
     /// Every read of the open orders fails with this error of Kraken, none when None
     pub fn fail_open_orders(&self, error: Option<&str>) {
         self.state().open_orders_error = error.map(str::to_string);
+    }
+
+    pub fn set_key_permissions(&self, permissions: &[&str]) {
+        self.state().key_permissions = permissions.iter().map(|it| it.to_string()).collect();
+    }
+
+    /// Every read of the closed orders fails with this error of Kraken, none when None
+    pub fn fail_closed_orders(&self, error: Option<&str>) {
+        self.state().closed_orders_error = error.map(str::to_string);
+    }
+
+    /// Kraken refuses the key with this error, none when None
+    pub fn refuse_key(&self, error: Option<&str>) {
+        self.state().key_error = error.map(str::to_string);
     }
 
     pub fn add_order_calls(&self) -> usize {
@@ -542,6 +567,14 @@ impl Exchange for SimulatedExchange {
             .collect())
     }
 
+    async fn key_permissions(&self) -> ExchangeResult<Vec<String>> {
+        let state = self.state();
+        match &state.key_error {
+            Some(body) => Err(error(body)),
+            None => Ok(state.key_permissions.clone()),
+        }
+    }
+
     async fn open_orders(&self) -> ExchangeResult<Vec<Order>> {
         let state = self.state();
         if let Some(body) = &state.open_orders_error {
@@ -556,6 +589,9 @@ impl Exchange for SimulatedExchange {
     }
 
     async fn closed_orders(&self, request: &ClosedOrdersRequest) -> ExchangeResult<ClosedOrders> {
+        if let Some(body) = &self.state().closed_orders_error {
+            return Err(error(body));
+        }
         let state = self.state();
         let mut matching: Vec<Order> = state
             .orders

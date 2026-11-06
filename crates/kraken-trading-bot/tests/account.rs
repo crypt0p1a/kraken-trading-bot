@@ -75,3 +75,45 @@ async fn saves_a_new_manager_before_synchronizing_the_orders() {
     assert_eq!(price, d("50000"));
     assert_eq!(bot.exchange().add_order_calls(), 0);
 }
+
+#[tokio::test]
+async fn tells_what_is_wrong_with_the_api_key() {
+    let (exchange, config) = exchange_and_config();
+    let bot = Bot::new(exchange, Storage::open_in_memory().unwrap(), config).with_seed(7);
+    assert_eq!(bot.key_problems().await.unwrap(), Vec::<String>::new());
+
+    // a permission missing
+    bot.exchange()
+        .set_key_permissions(&["query-funds", "query-open-trades"]);
+    let problems = bot.key_problems().await.unwrap();
+    assert_eq!(problems.len(), 1);
+    assert!(
+        problems[0].contains("Create & Modify Orders"),
+        "{problems:?}"
+    );
+
+    // able to withdraw, even with everything else
+    bot.exchange().set_key_permissions(&[
+        "query-funds",
+        "query-open-trades",
+        "modify-trades",
+        "withdraw-funds",
+    ]);
+    let problems = bot.key_problems().await.unwrap();
+    assert_eq!(problems.len(), 1);
+    assert!(problems[0].contains("withdraw"), "{problems:?}");
+
+    // the closed orders can't be read
+    bot.exchange()
+        .set_key_permissions(&["query-funds", "query-open-trades", "modify-trades"]);
+    bot.exchange()
+        .fail_closed_orders(Some("EGeneral:Permission denied"));
+    let problems = bot.key_problems().await.unwrap();
+    assert!(problems[0].contains("closed orders"), "{problems:?}");
+    bot.exchange().fail_closed_orders(None);
+
+    // refused
+    bot.exchange().refuse_key(Some("EAPI:Invalid key"));
+    assert!(bot.key_problems().await.is_err());
+    assert_eq!(bot.exchange().add_order_calls(), 0);
+}

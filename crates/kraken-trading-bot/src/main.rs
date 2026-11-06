@@ -3,7 +3,7 @@
 //! ```text
 //! kraken-trading-bot           ticks until SIGTERM / Ctrl-C
 //! kraken-trading-bot --once    a single tick
-//! kraken-trading-bot --check   checks the configuration and the pairs on Kraken, then stops
+//! kraken-trading-bot --check   checks the configuration, the pairs and the API keys on Kraken, then stops
 //! ```
 //!
 //! Environment (or `.env`): KRAKEN_API_KEY, KRAKEN_API_SECRET, KRAKEN_BOT_CONFIG,
@@ -89,8 +89,8 @@ async fn run(mode: Mode) -> Result<(), String> {
         "starting"
     );
 
-    // the pairs of every account are checked before any of them trades. Not its key, which only
-    // private calls use: a refused key fails the ticks of its account, the others go on
+    // the pairs of every account are checked before any of them trades. Not its key, unless asked
+    // with --check: a refused key fails the ticks of its account, the others go on
     let limiter = Arc::new(RateLimiter::default());
     let several = environment.accounts.len() > 1;
     let mut bots = Vec::new();
@@ -104,8 +104,7 @@ async fn run(mode: Mode) -> Result<(), String> {
     }
 
     if mode == Mode::Check {
-        tracing::info!("the configuration and the pairs are valid");
-        return Ok(());
+        return check_keys(&bots).await;
     }
 
     let (stop, stopped) = watch::channel(false);
@@ -141,6 +140,27 @@ async fn run(mode: Mode) -> Result<(), String> {
             }
         })
         .await
+}
+
+/// The API key of each account, all of them told about before failing. Nothing is placed
+async fn check_keys(bots: &[(Bot<KrakenExchange>, tracing::Span)]) -> Result<(), String> {
+    let mut valid = true;
+    for (bot, span) in bots {
+        let problems = match bot.key_problems().instrument(span.clone()).await {
+            Ok(problems) => problems,
+            Err(error) => vec![format!("the key is refused: {error}")],
+        };
+        let _entered = span.enter();
+        for problem in &problems {
+            tracing::error!("{problem}");
+            valid = false;
+        }
+    }
+    if !valid {
+        return Err("an API key isn't valid".to_string());
+    }
+    tracing::info!("the configuration, the pairs and the API keys are valid");
+    Ok(())
 }
 
 /// The bot of this account, its pairs checked on Kraken

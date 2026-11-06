@@ -18,7 +18,9 @@ use crate::strategy::{self, Action, Decision};
 use crate::sync::{self, SyncReport};
 use crate::{BotError, BotResult};
 use kraken_api::account::ExtendedBalance;
-use kraken_api::trading::{NewOrder, OrderFlag, OrderSide, OrderStatus, OrderType, TimeInForce};
+use kraken_api::trading::{
+    ClosedOrdersRequest, NewOrder, OrderFlag, OrderSide, OrderStatus, OrderType, TimeInForce,
+};
 use rust_decimal::Decimal;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Mutex;
@@ -322,6 +324,36 @@ impl<E: Exchange> Bot<E> {
             self.pair_keys.insert(manager.pair.clone(), key.clone());
         }
         Ok(())
+    }
+
+    /// What's wrong with the API key, nothing when the bot can trade with it and it can't withdraw.
+    /// Kraken refusing it at all is an error
+    pub async fn key_problems(&self) -> BotResult<Vec<String>> {
+        let permissions = self.exchange.key_permissions().await?;
+        let has = |name: &str| permissions.iter().any(|it| it == name);
+        let mut problems: Vec<String> = [
+            ("query-funds", "Query Funds"),
+            ("query-open-trades", "Query Open Orders & Trades"),
+            ("modify-trades", "Create & Modify Orders"),
+        ]
+        .into_iter()
+        .filter(|(name, _)| !has(name))
+        .map(|(_, label)| format!("the key is missing the permission {label}"))
+        .collect();
+        // a read rather than the name of the permission
+        if let Err(error) = self
+            .exchange
+            .closed_orders(&ClosedOrdersRequest::default())
+            .await
+        {
+            problems.push(format!(
+                "the key can't read the closed orders (Query Closed Orders & Trades): {error}"
+            ));
+        }
+        if permissions.iter().any(|it| it.contains("withdraw")) {
+            problems.push("the key can withdraw funds: it must never have this permission".into());
+        }
+        Ok(problems)
     }
 
     async fn markets(&self) -> BotResult<HashMap<String, Market>> {
