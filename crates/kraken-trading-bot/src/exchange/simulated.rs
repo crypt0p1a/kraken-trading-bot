@@ -39,6 +39,8 @@ struct State {
     cancel_error: Option<String>,
     /// The error every read of the trades answers, when set
     trades_error: Option<String>,
+    /// The error every read of the open orders answers, when set
+    open_orders_error: Option<String>,
 }
 
 fn error(body: &str) -> KrakenError {
@@ -63,6 +65,7 @@ impl SimulatedExchange {
                 add_order_calls: 0,
                 cancel_error: None,
                 trades_error: None,
+                open_orders_error: None,
             }),
         }
     }
@@ -245,6 +248,11 @@ impl SimulatedExchange {
     /// Every read of the trades fails with this error of Kraken, none when None
     pub fn fail_trades(&self, error: Option<&str>) {
         self.state().trades_error = error.map(str::to_string);
+    }
+
+    /// Every read of the open orders fails with this error of Kraken, none when None
+    pub fn fail_open_orders(&self, error: Option<&str>) {
+        self.state().open_orders_error = error.map(str::to_string);
     }
 
     pub fn add_order_calls(&self) -> usize {
@@ -536,6 +544,9 @@ impl Exchange for SimulatedExchange {
 
     async fn open_orders(&self) -> ExchangeResult<Vec<Order>> {
         let state = self.state();
+        if let Some(body) = &state.open_orders_error {
+            return Err(error(body));
+        }
         Ok(state
             .orders
             .iter()

@@ -47,3 +47,31 @@ managers:
     assert_eq!(account.holdings, bitcoins * d("49000"));
     assert!(account.cash < d("71"), "{}", account.cash);
 }
+
+fn exchange_and_config() -> (SimulatedExchange, BotConfig) {
+    let exchange = SimulatedExchange::new(1_800_000_000.0);
+    exchange.add_pair(BTC, "XBTUSD", "XXBT", "ZUSD", d("50000"));
+    exchange.deposit("ZUSD", d("100"));
+    let config = BotConfig::parse(
+        "dry_run: false
+managers:
+  - {id: 1, pair: XBTUSD, budget: 30, buy_below: 1, sell_above: 1.5}",
+    )
+    .unwrap();
+    (exchange, config)
+}
+
+/// The synchronization of the orders can take minutes: the dashboard shows the managers before it
+#[tokio::test]
+async fn saves_a_new_manager_before_synchronizing_the_orders() {
+    let (exchange, config) = exchange_and_config();
+    exchange.fail_open_orders(Some("EService:Unavailable"));
+    let mut bot = Bot::new(exchange, Storage::open_in_memory().unwrap(), config).with_seed(7);
+    bot.prepare().await.unwrap();
+
+    assert!(bot.tick().await.is_err());
+    let (balances, price, _) = bot.storage().manager_balances(1).unwrap().unwrap();
+    assert_eq!(balances.quote_available, d("30"));
+    assert_eq!(price, d("50000"));
+    assert_eq!(bot.exchange().add_order_calls(), 0);
+}

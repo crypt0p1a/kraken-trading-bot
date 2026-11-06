@@ -25,15 +25,52 @@ impl Storage {
     /// Saves the current state of the manager, and adds it to its history
     pub fn save_manager(&self, state: &ManagerState) -> Result<()> {
         let ManagerState {
+            balances,
+            last_price,
+            at,
+            config,
+        } = state;
+        let value = state.value();
+        let transaction = self.connection.unchecked_transaction()?;
+        self.write_manager(&transaction, state)?;
+
+        transaction.execute(
+            "INSERT INTO manager_snapshots (account, manager_id, at, quote_available, quote_in_buy_order,
+                base_available, base_in_sell_order, position_cost, entry_price, last_price, value)
+             VALUES (?11, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                config.id,
+                at,
+                balances.quote_available.to_string(),
+                balances.quote_in_buy_order.to_string(),
+                balances.base_available.to_string(),
+                balances.base_in_sell_order.to_string(),
+                balances.position_cost.to_string(),
+                balances.entry_price.map(|it| it.to_string()),
+                last_price.to_string(),
+                value.to_string(),
+                self.account,
+            ],
+        )?;
+
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// The state of the manager, without a point in its history: its tick adds it
+    pub fn save_new_manager(&self, state: &ManagerState) -> Result<()> {
+        self.write_manager(&self.connection, state)
+    }
+
+    fn write_manager(&self, connection: &rusqlite::Connection, state: &ManagerState) -> Result<()> {
+        let ManagerState {
             config,
             balances,
             last_price,
             at,
         } = state;
         let value = state.value();
-        let transaction = self.connection.unchecked_transaction()?;
-
-        transaction.execute(
+        connection.execute(
             "INSERT INTO managers (account, id, pair, budget, buy_below, sell_above, mode, quote_available,
                 quote_in_buy_order, base_available, base_in_sell_order, position_cost, entry_price,
                 last_price, value, first_seen, updated_at)
@@ -67,27 +104,6 @@ impl Storage {
                 self.account,
             ],
         )?;
-
-        transaction.execute(
-            "INSERT INTO manager_snapshots (account, manager_id, at, quote_available, quote_in_buy_order,
-                base_available, base_in_sell_order, position_cost, entry_price, last_price, value)
-             VALUES (?11, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            params![
-                config.id,
-                at,
-                balances.quote_available.to_string(),
-                balances.quote_in_buy_order.to_string(),
-                balances.base_available.to_string(),
-                balances.base_in_sell_order.to_string(),
-                balances.position_cost.to_string(),
-                balances.entry_price.map(|it| it.to_string()),
-                last_price.to_string(),
-                value.to_string(),
-                self.account,
-            ],
-        )?;
-
-        transaction.commit()?;
         Ok(())
     }
 

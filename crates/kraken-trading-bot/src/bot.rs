@@ -418,6 +418,10 @@ impl<E: Exchange> Bot<E> {
         }
 
         let markets = self.markets().await?;
+        // only for the dashboard, each manager saves itself below: this never stops the trading
+        if let Err(error) = self.save_new_managers(&managers, &markets) {
+            tracing::warn!(%error, "the new managers couldn't be saved before the synchronization");
+        }
         let ids = managers.iter().map(|it| it.id).collect();
         let sync =
             sync::synchronize(&self.exchange, &self.storage, &ids, self.exchange.now()).await?;
@@ -662,6 +666,25 @@ impl<E: Exchange> Bot<E> {
         Ok(Some(config))
     }
 
+    /// The managers the database doesn't have yet, before the synchronization of the orders: with
+    /// several accounts sharing the limit of the calls to Kraken, it takes minutes, and the
+    /// dashboard would show nothing of a new account until then
+    fn save_new_managers(
+        &self,
+        managers: &[ManagerConfig],
+        markets: &HashMap<String, Market>,
+    ) -> BotResult<()> {
+        for manager in managers {
+            if self.storage.manager_balances(manager.id)?.is_none() {
+                let market = &markets[&self.pair_keys[&manager.pair]];
+                let orders = self.storage.orders_of(manager.id)?;
+                self.storage
+                    .save_new_manager(&manager_state(manager, market, &orders))?;
+            }
+        }
+        Ok(())
+    }
+
     async fn run_manager(
         &self,
         manager: &ManagerConfig,
@@ -669,13 +692,8 @@ impl<E: Exchange> Bot<E> {
         available: &mut HashMap<String, Decimal>,
     ) -> BotResult<Outcome> {
         let orders = self.storage.orders_of(manager.id)?;
-        let balances = ledger::compute(manager.budget, &orders);
-        let state = ManagerState {
-            config: manager.clone(),
-            balances: balances.clone(),
-            last_price: market.reference,
-            at: now_millis(),
-        };
+        let state = manager_state(manager, market, &orders);
+        let balances = state.balances.clone();
         self.storage.save_manager(&state)?;
         log_balances(manager, &state);
 
@@ -1100,6 +1118,16 @@ pub fn ensure_limit(order: &NewOrder) -> Result<(), String> {
         return Err("refused: a trigger, only for stop-loss and take-profit orders".into());
     }
     Ok(())
+}
+
+/// What the manager has now, from its orders
+fn manager_state(manager: &ManagerConfig, market: &Market, orders: &[BotOrder]) -> ManagerState {
+    ManagerState {
+        config: manager.clone(),
+        balances: ledger::compute(manager.budget, orders),
+        last_price: market.reference,
+        at: now_millis(),
+    }
 }
 
 fn log_balances(manager: &ManagerConfig, state: &ManagerState) {
