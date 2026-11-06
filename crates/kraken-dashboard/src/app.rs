@@ -42,6 +42,8 @@ pub enum Chart {
     Scenarios,
     /// What each period earned, in % of what the portfolio was worth before it
     Growth,
+    /// What the portfolio was made of over time, crypto by crypto
+    Allocation,
 }
 
 impl Chart {
@@ -52,7 +54,8 @@ impl Chart {
             Self::Price => Self::Trades,
             Self::Trades => Self::Scenarios,
             Self::Scenarios => Self::Growth,
-            Self::Growth => Self::Pnl,
+            Self::Growth => Self::Allocation,
+            Self::Allocation => Self::Pnl,
         }
     }
 }

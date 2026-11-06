@@ -493,11 +493,11 @@ fn shows_a_column_of_different_charts() {
     assert!(text.contains("IF THE MARKET MOVES · USD"), "{text}");
     assert!(text.contains("XBTUSD · #1"), "{text}");
 
-    // each key its own place, never a chart of another: back at the start in 4 presses, the 6
+    // each key its own place, never a chart of another: back at the start in 5 presses, the 7
     // charts without the 2 of the other places
     let charts = app.charts;
     for key in ['c', 'v', 'b'] {
-        for _ in 0..4 {
+        for _ in 0..5 {
             app.on_key(KeyEvent::from(KeyCode::Char(key)));
             let [first, second, third] = app.charts;
             assert!(first != second && first != third && second != third);
@@ -936,4 +936,49 @@ fn tells_what_is_free_and_what_is_missing_in_the_account() {
     assert!(text.contains("missing "), "{text}");
     assert!(text.contains(" · free 0.00"), "{text}");
     assert!(!text.contains("mgrs "), "{text}");
+}
+
+#[test]
+fn shows_what_the_portfolio_is_made_of() {
+    let fixture = path("allocation");
+    let storage = write(&fixture.path);
+    let (mut app, database) = app(&fixture.path);
+    let (now, since) = (app.loaded_at, app.model.data.since);
+
+    // the 0.0004 XBT of the managers at 76100, the cash of the account
+    let allocation = app.model.allocation("USD", since, now, 20);
+    assert_eq!(allocation.names, ["XBT", "USD"]);
+    let (at, last) = allocation.points.last().unwrap();
+    assert_eq!(*at, now as f64);
+    assert!((last[0] - 0.0004 * 76_100.0).abs() < 1e-6, "{last:?}");
+    assert!((last[1] - 57.23).abs() < 1e-6, "{last:?}");
+    // from the first tick of the account on: the range is longer than the history
+    assert!(allocation.points.len() < 20);
+
+    // bitcoins no manager bought
+    storage
+        .record_account(&AccountRecord {
+            at: now_millis(),
+            quote: "ZUSD".into(),
+            cash: d("10"),
+            holdings: d("100"),
+        })
+        .unwrap();
+    app.refresh(&database, true);
+    let allocation = app.model.allocation("USD", since, app.loaded_at, 20);
+    assert_eq!(allocation.names, ["XBT", "USD", "OTHER"]);
+    let last = &allocation.points.last().unwrap().1;
+    assert!(
+        (last[2] - (100.0 - 0.0004 * 76_100.0)).abs() < 1e-6,
+        "{last:?}"
+    );
+
+    // the place of the chart in the cycle, with what each is worth now
+    app.charts[0] = Chart::Growth;
+    app.on_key(KeyEvent::from(KeyCode::Char('c')));
+    assert_eq!(app.charts[0], Chart::Allocation);
+    let text = screen(&app, 200, 50);
+    assert!(text.contains("BY CRYPTO · USD"), "{text}");
+    assert!(text.contains("■XBT 30 "), "{text}");
+    assert!(text.contains("■OTHER 70 "), "{text}");
 }

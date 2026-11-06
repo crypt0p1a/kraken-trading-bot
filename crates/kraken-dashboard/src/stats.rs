@@ -2,7 +2,8 @@
 //! totals by quote currency, the P&L over time, the pair of each manager
 
 use crate::data::{
-    Account, Data, Manager, ManagerKey, Market, Order, Side, Snapshot, percent, to_f64,
+    Account, AccountPoint, Data, Manager, ManagerKey, Market, Order, Side, Snapshot, percent,
+    to_f64,
 };
 use rust_decimal::Decimal;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -46,6 +47,22 @@ pub fn split(pair: &str) -> (String, String) {
     }
     (pair, String::new())
 }
+
+/// What the account was made of over time, a layer per crypto, then its quote
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Allocation {
+    /// The cryptos the managers held, by name, then the quote, then [`OTHER`] if there's some
+    pub names: Vec<String>,
+    /// From the oldest: (UTC milliseconds, what each name is worth)
+    pub points: Vec<(f64, Vec<f64>)>,
+}
+
+/// What the account holds that no manager bought, a layer of its own
+pub const OTHER: &str = "OTHER";
+
+/// A share of the account under this isn't something held: the managers and the account aren't
+/// valued at the same instant, nor exactly at the same price
+const OTHER_NOISE: f64 = 0.005;
 
 /// A sell, and what it earned against what its base cost
 #[derive(Debug, Clone, PartialEq)]
@@ -480,6 +497,83 @@ impl Model {
             .find(|it| asset(&it.quote) == quote)
     }
 
+    /// What the whole account was made of, at `columns` moments from `since` to `now`
+    pub fn allocation(&self, quote: &str, since: i64, now: i64, columns: usize) -> Allocation {
+        let bases: HashMap<ManagerKey, String> = self
+            .data
+            .managers
+            .iter()
+            .filter(|it| self.quotes.get(&it.id).is_some_and(|it| it == quote))
+            .map(|it| (it.id, split(&it.pair).0))
+            .collect();
+        let mut cryptos: Vec<&str> = bases.values().map(String::as_str).collect();
+        cryptos.sort_unstable();
+        cryptos.dedup();
+
+        let accounts: Vec<&AccountPoint> = self
+            .data
+            .account_series
+            .iter()
+            .filter(|it| asset(&it.quote) == quote)
+            .collect();
+        let (mut next_snapshot, mut next_account) = (0, 0_usize);
+        let mut held: HashMap<ManagerKey, f64> = HashMap::new();
+        let mut points = Vec::new();
+        for column in 0..columns {
+            let at = since + (now - since) * (column as i64 + 1) / columns as i64;
+            while let Some(snapshot) = self
+                .data
+                .snapshots
+                .get(next_snapshot)
+                .filter(|it| it.at <= at)
+            {
+                held.insert(snapshot.manager_id, snapshot.held);
+                next_snapshot += 1;
+            }
+            while accounts.get(next_account).is_some_and(|it| it.at <= at) {
+                next_account += 1;
+            }
+            // nothing recorded yet at this moment, and each counts for its last value known
+            let Some(account) = next_account.checked_sub(1).map(|it| accounts[it]) else {
+                continue;
+            };
+            let mut values: Vec<f64> = cryptos
+                .iter()
+                .map(|crypto| {
+                    held.iter()
+                        .filter(|(id, _)| bases.get(*id).is_some_and(|it| it == crypto))
+                        .map(|(_, it)| it)
+                        .sum()
+                })
+                .collect();
+            let other = account.value - account.cash - values.iter().sum::<f64>();
+            values.push(account.cash);
+            values.push(if other > account.value * OTHER_NOISE {
+                other
+            } else {
+                0.0
+            });
+            points.push((at as f64, values));
+        }
+
+        let names = cryptos
+            .into_iter()
+            .chain([quote, OTHER])
+            .map(str::to_string);
+        // the layers never seen in the range say nothing
+        let kept: Vec<(usize, String)> = names
+            .enumerate()
+            .filter(|(index, _)| points.iter().any(|(_, it)| it[*index] > 0.0))
+            .collect();
+        Allocation {
+            points: points
+                .into_iter()
+                .map(|(at, values)| (at, kept.iter().map(|(it, _)| values[*it]).collect()))
+                .collect(),
+            names: kept.into_iter().map(|(_, it)| it).collect(),
+        }
+    }
+
     /// The quote of the account no open order holds: what can be spent right now
     pub fn free_cash(&self, account: &Account) -> Decimal {
         let quote = asset(&account.quote);
@@ -714,6 +808,7 @@ mod tests {
             manager_id,
             at,
             value,
+            held: 0.0,
         };
         let snapshots = [
             snapshot(1, 0, 100.0),

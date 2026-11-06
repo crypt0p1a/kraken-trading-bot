@@ -150,6 +150,8 @@ pub struct Snapshot {
     /// UTC milliseconds
     pub at: i64,
     pub value: f64,
+    /// What its base is worth, at the last price
+    pub held: f64,
 }
 
 /// A decision of a manager, and what came of it
@@ -235,6 +237,8 @@ pub struct AccountPoint {
     /// UTC milliseconds
     pub at: i64,
     pub value: f64,
+    /// The quote in the account, held by orders or not
+    pub cash: f64,
 }
 
 /// Everything shown, read at once
@@ -514,7 +518,8 @@ impl Database {
         // the bare columns of SQLite: the amounts come from the row of MAX(at)
         let id = if self.has_accounts() { "account" } else { "1" };
         let mut statement = self.connection.prepare_cached(&format!(
-            "SELECT {id}, quote, MAX(at), CAST(cash AS REAL) + CAST(holdings AS REAL)
+            "SELECT {id}, quote, MAX(at), CAST(cash AS REAL) + CAST(holdings AS REAL),
+                CAST(cash AS REAL)
              FROM account_snapshots WHERE {} AND at >= ?1 GROUP BY {id}, quote, at / ?2 ORDER BY 3",
             self.only(account)
         ))?;
@@ -524,6 +529,7 @@ impl Database {
                 quote: row.get(1)?,
                 at: row.get(2)?,
                 value: row.get(3)?,
+                cash: row.get(4)?,
             })
         })?;
         Ok(added_up(
@@ -623,7 +629,10 @@ impl Database {
     ) -> rusqlite::Result<Vec<Snapshot>> {
         // the bare column of SQLite: `value` comes from the row of MAX(at)
         let mut statement = self.connection.prepare_cached(&format!(
-            "SELECT {}, MAX(at), CAST(value AS REAL) FROM manager_snapshots
+            "SELECT {}, MAX(at), CAST(value AS REAL),
+                (CAST(base_available AS REAL) + CAST(base_in_sell_order AS REAL))
+                    * CAST(last_price AS REAL)
+             FROM manager_snapshots
              WHERE {} AND at >= ?1 GROUP BY 1, at / ?2 ORDER BY 2",
             self.key(),
             self.only(account)
@@ -633,6 +642,7 @@ impl Database {
                 manager_id: row.get(0)?,
                 at: row.get(1)?,
                 value: row.get(2)?,
+                held: row.get(3)?,
             })
         })?;
         rows.collect()
@@ -747,21 +757,23 @@ struct AccountRow {
     quote: String,
     at: i64,
     value: f64,
+    cash: f64,
 }
 
 /// What the accounts are worth together per bucket and quote, oldest first: the accounts don't tick
 /// at the same millisecond, so each counts for its last value known. The rows are sorted by time
 fn added_up(rows: &[AccountRow], bucket: i64) -> Vec<AccountPoint> {
-    let mut last: HashMap<(i64, &str), f64> = HashMap::new();
+    let mut last: HashMap<(i64, &str), (f64, f64)> = HashMap::new();
     let mut points: Vec<AccountPoint> = Vec::new();
     let mut indexes: HashMap<(&str, i64), usize> = HashMap::new();
     for row in rows {
-        last.insert((row.account, &row.quote), row.value);
-        let value = last
+        last.insert((row.account, &row.quote), (row.value, row.cash));
+        let (value, cash) = last
             .iter()
             .filter(|((_, quote), _)| *quote == row.quote)
-            .map(|(_, value)| value)
-            .sum();
+            .fold((0.0, 0.0), |(value, cash), (_, it)| {
+                (value + it.0, cash + it.1)
+            });
         let index = *indexes
             .entry((&row.quote, row.at / bucket))
             .or_insert_with(|| {
@@ -769,11 +781,13 @@ fn added_up(rows: &[AccountRow], bucket: i64) -> Vec<AccountPoint> {
                     quote: row.quote.clone(),
                     at: row.at,
                     value,
+                    cash,
                 });
                 points.len() - 1
             });
         points[index].at = row.at;
         points[index].value = value;
+        points[index].cash = cash;
     }
     points
 }
@@ -821,6 +835,7 @@ mod tests {
             quote: "ZEUR".into(),
             at,
             value,
+            cash: 0.0,
         }
     }
 
