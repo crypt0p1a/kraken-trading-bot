@@ -173,10 +173,14 @@ async fn prepared(
 ) -> Result<Bot<KrakenExchange>, String> {
     let storage = Storage::open_account(&environment.database_path, &account.name)
         .map_err(|error| error.to_string())?;
+    let mut options = RestOptions::default();
+    if let Some(host) = &environment.api_host {
+        options.host = host.clone();
+    }
     let exchange = KrakenExchange::with_limiter(
         account.api_key.clone(),
         account.api_secret.clone(),
-        RestOptions::default(),
+        options,
         limiter,
     )
     .map_err(|error| error.to_string())?;
