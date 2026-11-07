@@ -1,0 +1,256 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # every day: the dry run on the real Kraken detects the changes of its API
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# a new push to the same pull request cancels the run in progress. The steps and jobs
+# which must run after a failure use !cancelled(), not always(): always() keeps them running after
+# a cancellation, which holds the run and leaves the new one pending
+concurrency:
+  group: ci-${{ github.ref }}
+  # only the runs of a pull request: the runs of main go to the end, to save the caches every pull
+  # request starts from (a cancelled run saves none)
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  secrets:
+    name: Secrets (gitleaks + trufflehog)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: gitleaks, whole history (default rules + entropy rules of .gitleaks.toml)
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo ghcr.io/gitleaks/gitleaks:v8.28.0 \
+            git /repo --config /repo/.gitleaks.toml --redact --no-banner --exit-code 1
+      - name: gitleaks, working tree (files ignored by git included)
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo ghcr.io/gitleaks/gitleaks:v8.28.0 \
+            dir /repo --config /repo/.gitleaks.toml --redact --no-banner --exit-code 1
+      - name: trufflehog, whole history (verified and unverified secrets)
+        uses: trufflesecurity/trufflehog@v3.90.8
+        with:
+          extra_args: --results=verified,unknown,unverified
+      - name: no credentials file committed
+        run: |
+          if git ls-files | grep -E '(^|/)\.env$'; then
+            echo "::error::.env must not be committed"; exit 1
+          fi
+
+  lint:
+    name: Format and clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked
+
+  test:
+    name: Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - name: Unit and mocked tests (offline)
+        run: cargo nextest run --workspace --locked --profile ci
+      - name: Documentation tests
+        run: cargo test --workspace --locked --doc
+      - name: Test report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-${{ matrix.os }}
+          path: target/nextest/ci/junit.xml
+          if-no-files-found: ignore
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      # the loop of the executable needs the real Kraken: checked by the docker job instead
+      IGNORED: --ignore-filename-regex kraken-trading-bot/src/main\.rs
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov,cargo-nextest
+      - name: Offline tests with coverage
+        run: cargo llvm-cov nextest --workspace --locked --profile ci --no-report
+      - name: Reports (lcov, HTML, summary)
+        run: |
+          cargo llvm-cov report --lcov --output-path lcov.info $IGNORED
+          cargo llvm-cov report --html --output-dir coverage $IGNORED
+          {
+            echo "## Coverage"
+            echo '```'
+            cargo llvm-cov report --summary-only $IGNORED
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      # 94.8% of the lines when the bot left kraken-rust, whose library carried the 95%
+      - name: Minimum coverage
+        run: cargo llvm-cov report --summary-only --fail-under-lines 94 $IGNORED
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            lcov.info
+            coverage/html
+      - name: Codecov (when the CODECOV_TOKEN secret is set)
+        if: env.CODECOV_TOKEN != ''
+        uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+  docker:
+    name: Docker image (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: amd64, os: ubuntu-latest }
+          - { arch: arm64, os: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      # the cache mounts of the Dockerfile (registry, target) live in the runner, lost after the job:
+      # kept in the cache of GitHub, then put back into BuildKit before the build
+      - name: Cache of the cargo mounts of the Dockerfile
+        id: cargo-mounts
+        uses: actions/cache@v4
+        with:
+          path: |
+            cargo-registry
+            cargo-target
+          key: docker-cargo-${{ matrix.arch }}-${{ hashFiles('Cargo.lock', 'Dockerfile') }}
+          restore-keys: docker-cargo-${{ matrix.arch }}-
+      - uses: reproducible-containers/buildkit-cache-dance@v3
+        with:
+          cache-map: |
+            {
+              "cargo-registry": "/usr/local/cargo/registry",
+              "cargo-target": "/build/target"
+            }
+          skip-extraction: ${{ steps.cargo-mounts.outputs.cache-hit }}
+      # the layers (the base images) in the cache of GitHub too
+      - name: Build the image of kraken-trading-bot
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: kraken-trading-bot:ci
+          cache-from: type=gha,scope=docker-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=docker-${{ matrix.arch }}
+      - name: Refuses to start without credentials
+        run: |
+          set +e
+          output=$(docker run --rm kraken-trading-bot:ci 2>&1)
+          code=$?
+          echo "$output"
+          test "$code" -eq 1 && echo "$output" | grep -q "KRAKEN_API_KEY is required"
+      # the pairs come first: reaching the fake key means they're valid, and Kraken refusing it that
+      # the private call goes through
+      - name: Checks the example configuration against the pairs of Kraken, then refuses a fake key
+        run: |
+          code=0
+          output=$(docker run --rm \
+            -e KRAKEN_API_KEY=not-a-key -e KRAKEN_API_SECRET=bm90LWEtc2VjcmV0 \
+            -v "$PWD/managers.example.yaml:/config/managers.yaml:ro" \
+            kraken-trading-bot:ci --check 2>&1) || code=$?
+          echo "$output"
+          test "$code" -eq 1 && echo "$output" | grep -q "the key is refused: .*EAPI:Invalid key"
+      - name: Image size
+        run: docker images kraken-trading-bot:ci --format '{{.Size}}' | tee -a "$GITHUB_STEP_SUMMARY"
+
+  audit:
+    name: Vulnerabilities of the dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - run: cargo audit
+
+  live-private:
+    name: Dry run on the real Kraken (orders validated only)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      KRAKEN_API_KEY: ${{ secrets.KRAKEN_API_KEY }}
+      KRAKEN_API_SECRET: ${{ secrets.KRAKEN_API_SECRET }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+      - name: A tick of the bot, its orders validated, never placed
+        if: env.KRAKEN_API_KEY != ''
+        run: >-
+          cargo nextest run --locked --profile live --run-ignored only
+          -p kraken-trading-bot --test live_dry_run
+      - name: Test report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-live-private
+          path: target/nextest/live/junit.xml
+          if-no-files-found: ignore
+      - name: Without credentials
+        if: env.KRAKEN_API_KEY == ''
+        run: echo "::warning::KRAKEN_API_KEY / KRAKEN_API_SECRET secrets not set, dry run skipped"
+
+  report:
+    name: Test report
+    needs: [test, live-private]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      checks: write
+      pull-requests: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: junit-*
+          path: junit
+      - name: Publish the results of every platform in a "Test results" check
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          check_name: Test results
+          files: junit/**/*.xml
