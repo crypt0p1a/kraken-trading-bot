@@ -1149,3 +1149,227 @@ fn runs_the_desk_until_q() {
     let text: String = buffer.content().iter().map(|it| it.symbol()).collect();
     assert!(text.contains("TRADING DESK"));
 }
+
+#[test]
+fn tells_every_decision_of_the_tape() {
+    let fixture = path("tape");
+    let storage = write(&fixture.path);
+    let now = now_millis();
+    let action = |kind: &str, reason: &str, error: Option<&str>| ActionRecord {
+        manager_id: 1,
+        at: now - 30_000,
+        kind: kind.into(),
+        amount: None,
+        price: None,
+        reason: Some(reason.into()),
+        dry_run: false,
+        txid: None,
+        error: error.map(Into::into),
+    };
+    for record in [
+        action("buy_cancelled", "the price rose 0.6%", None),
+        action("buy_cancelled", "", Some("EOrder:Unknown order")),
+        action("virtual_created", "money no manager uses", None),
+        action("virtual_deleted", "starved 3 ticks", None),
+        // a kind the dashboard doesn't know: its name, in the 5 columns of the kind
+        action("audit", "", Some("EService:Unavailable")),
+    ] {
+        storage.record_action(&record).unwrap();
+    }
+    let (mut app, database) = app(&fixture.path);
+
+    let text = screen(&app, 220, 60);
+    for shown in [
+        "TRAIL",
+        "buy cancelled, placed again higher",
+        // what went wrong first: a narrow tape cuts the end of the line
+        "✗ EOrder:Unknown order",
+        "+VIRT",
+        "money no manager uses",
+        "-VIRT",
+        "AUDIT",
+        "EService:Unavailable",
+    ] {
+        assert!(text.contains(shown), "{shown}: {text}");
+    }
+    // the idle decisions, hidden until i
+    assert!(text.contains("idle hidden"), "{text}");
+    press(&mut app, &database, 'i');
+    assert!(app.actions().iter().any(|it| it.kind == "idle"));
+    assert!(!screen(&app, 220, 60).contains("idle hidden"));
+}
+
+#[test]
+fn tells_the_trend_of_each_market() {
+    use kraken_trading_bot::market::Indicators;
+    let fixture = path("trends");
+    let storage = write(&fixture.path);
+    let now = now_millis();
+    for (pair, price, fast, slow, slope) in [
+        ("XXBTZUSD", "76100", 76_000.0, 75_000.0, 1.2),
+        ("XETHZUSD", "2200", 2_100.0, 2_200.0, -0.8),
+        ("SOLUSD", "80", 81.0, 80.0, -0.1),
+    ] {
+        storage
+            .record_ticker(&TickerRecord {
+                pair: pair.into(),
+                at: now,
+                last: d(price),
+                bid: d(price),
+                ask: d(price),
+                volume_24h: d("100"),
+                vwap_24h: d(price),
+            })
+            .unwrap();
+        storage
+            .record_indicators(
+                pair,
+                now,
+                &Indicators {
+                    close: 1.0,
+                    atr_percent: 0.32,
+                    ema_fast: fast,
+                    ema_slow: slow,
+                    slope_24h_percent: slope,
+                    range_24h_percent: 5.66,
+                    change_24h_percent: slope,
+                    candles: 96,
+                },
+            )
+            .unwrap();
+    }
+    let (app, _database) = app(&fixture.path);
+    let text = screen(&app, 200, 50);
+    for shown in ["▲ RISING", "▼ FALLING", "◆ MIXED", "0.32%", "▲ +1.20%"] {
+        assert!(text.contains(shown), "{shown}: {text}");
+    }
+}
+
+#[test]
+fn moves_with_every_key() {
+    let fixture = path("keys");
+    let _storage = write(&fixture.path);
+    let (mut app, database) = app(&fixture.path);
+
+    // the help, closed by any key, which does nothing else
+    app.on_key(key('?'));
+    assert!(app.help);
+    assert!(screen(&app, 200, 50).contains("Any key closes this"));
+    assert!(!app.on_key(key('q')));
+    assert!(!app.help && !app.quit);
+
+    // the panels backwards, the ends of a table, by pages
+    app.on_key(KeyEvent::from(KeyCode::BackTab));
+    assert_eq!(app.panel, Panel::Tape);
+    app.on_key(KeyEvent::from(KeyCode::BackTab));
+    assert_eq!(app.panel, Panel::Orders);
+    let last = app.orders().len() - 1;
+    app.on_key(KeyEvent::from(KeyCode::End));
+    assert_eq!(app.orders_row, last);
+    app.on_key(KeyEvent::from(KeyCode::Home));
+    assert_eq!(app.orders_row, 0);
+    app.on_key(KeyEvent::from(KeyCode::PageDown));
+    assert_eq!(app.orders_row, last.min(10));
+    app.on_key(KeyEvent::from(KeyCode::PageUp));
+    assert_eq!(app.orders_row, 0);
+    app.on_key(key('G'));
+    assert_eq!(app.orders_row, last);
+    app.on_key(key('g'));
+    assert_eq!(app.orders_row, 0);
+
+    // the open orders only, then all of them
+    app.on_key(key('o'));
+    assert!(app.open_only);
+    assert!(app.orders().iter().all(|it| !it.is_final));
+    app.on_key(key('o'));
+    assert!(!app.open_only);
+
+    // a manager focused on, then all of them again with esc
+    app.on_key(KeyEvent::from(KeyCode::Enter));
+    assert!(app.drilled);
+    app.on_key(KeyEvent::from(KeyCode::Esc));
+    assert!(!app.drilled);
+
+    // r reads again, t asks for a tick at the next turn of the loop
+    assert!(app.on_key(key('r')));
+    app.on_key(key('t'));
+    assert!(app.tick_asked);
+    app.ask_tick(&database);
+    assert!(!app.tick_asked);
+    assert_eq!(app.model.data.forced_tick.as_deref(), Some("refresh"));
+
+    // every range, read and drawn, with the growth of its periods
+    app.charts = [Chart::Growth, Chart::Pnl, Chart::Portfolio];
+    for (digit, range, period) in [
+        ('1', Range::Hour, "5 MIN"),
+        ('2', Range::Day, "HOUR"),
+        ('3', Range::Week, "DAY"),
+        ('4', Range::Month, "DAY"),
+        ('5', Range::All, "DAY"),
+    ] {
+        press(&mut app, &database, digit);
+        assert_eq!(app.range, range);
+        assert_eq!(app.error, None);
+        let text = screen(&app, 200, 50);
+        assert!(
+            text.contains(&format!("GROWTH PER {period}")),
+            "{digit}: {text}"
+        );
+    }
+
+    app.on_key(key('q'));
+    assert!(app.quit);
+}
+
+/// Every column of every table: the rows follow it, both ways
+#[test]
+fn sorts_on_every_column() {
+    use kraken_dashboard::sort::{self, Key};
+    use std::cmp::Ordering;
+
+    let fixture = path("columns");
+    let _storage = write(&fixture.path);
+    let (mut app, _database) = app(&fixture.path);
+    let in_order = |keys: &[Key], descending: bool| {
+        keys.windows(2)
+            .all(|it| it[0].compare(&it[1], descending) != Ordering::Greater)
+    };
+
+    for panel in [Panel::Managers, Panel::Orders, Panel::Tape] {
+        while app.panel != panel {
+            app.on_key(KeyEvent::from(KeyCode::Tab));
+        }
+        for _ in sort::columns(panel) {
+            app.on_key(KeyEvent::from(KeyCode::Right));
+            for _ in 0..2 {
+                let sorted = app.sort(panel);
+                let keys: Vec<Key> = match panel {
+                    Panel::Managers => app
+                        .model
+                        .data
+                        .managers
+                        .iter()
+                        .map(|it| sort::manager(&app.model, it, sorted.column))
+                        .collect(),
+                    Panel::Orders => app
+                        .orders()
+                        .into_iter()
+                        .map(|it| sort::order(&app.model, it, sorted.column))
+                        .collect(),
+                    Panel::Tape => app
+                        .actions()
+                        .into_iter()
+                        .map(|it| sort::action(it, sorted.column))
+                        .collect(),
+                };
+                assert!(
+                    in_order(&keys, sorted.descending),
+                    "{panel:?} {}: {keys:?}",
+                    sorted.name(panel)
+                );
+                screen(&app, 200, 50);
+                app.on_key(key('s'));
+            }
+        }
+    }
+}
