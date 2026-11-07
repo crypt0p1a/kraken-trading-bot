@@ -1,0 +1,46 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/kraken-dashboard",
+  "crates/kraken-trading-bot",
+  "crates/trading-notify",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/crypt0p1a/kraken-trading-bot"
+
+[workspace.dependencies]
+# the Kraken Spot REST API, from crates.io: https://github.com/crypt0p1a/kraken-rust
+kraken-spot-api = "0.1.0"
+
+# crates of the workspace
+kraken-trading-bot = { path = "crates/kraken-trading-bot" }
+trading-notify = { path = "crates/trading-notify" }
+
+# trading bot
+# the indicators of the market (ATR, EMA, linear regression), on candles in f64
+yata = { version = "0.7.0", default-features = false }
+# the managers copied by the virtual managers, picked at random
+fastrand = "2.3.0"
+humantime-serde = "1.1.1"
+# notifications: only the async dispatcher, on rustls
+ntfy = { version = "0.9.1", default-features = false, features = ["async-dispatcher", "rustls"] }
+rusqlite = { version = "0.41.1", features = ["bundled"] }
+rust_decimal = { version = "1.43.0", features = ["serde-str"] }
+serde_norway = "0.9.42"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+thiserror = "2.0.18"
+tokio = { version = "1", default-features = false }
+
+# dashboard: the terminal UI, with its crossterm backend
+ratatui = "0.30.2"
+
+# tests only
+wiremock = "0.6.5"

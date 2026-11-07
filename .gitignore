@@ -1,0 +1,22 @@
+# Rust
+/target
+**/*.rs.bk
+
+# IDE / OS
+.idea
+.vscode
+.DS_Store
+
+# Secrets
+.env
+
+# the managers and the database of the bot, local to each installation
+/managers.yaml
+/managers.yml
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# the cache mounts of the CI, restored next to the sources
+/cargo-registry
+/cargo-target

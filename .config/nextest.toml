@@ -1,0 +1,27 @@
+# cargo-nextest: https://nexte.st
+
+[profile.default]
+# the live tests stay ignored unless --run-ignored is given
+slow-timeout = { period = "60s" }
+
+[profile.ci]
+# every failure is reported, not only the first one
+fail-fast = false
+# a test hanging on the network fails instead of blocking the job
+slow-timeout = { period = "60s", terminate-after = 3 }
+
+[profile.ci.junit]
+# target/nextest/ci/junit.xml, published by the CI
+path = "junit.xml"
+store-success-output = false
+store-failure-output = true
+
+[profile.live]
+# the dry run against the real Kraken API: one at a time, the rate limits being shared
+fail-fast = false
+test-threads = 1
+slow-timeout = { period = "120s", terminate-after = 5 }
+
+[profile.live.junit]
+path = "junit.xml"
+store-failure-output = true
