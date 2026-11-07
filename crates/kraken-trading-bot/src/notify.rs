@@ -2,7 +2,7 @@
 
 use crate::order::BotOrder;
 use crate::pair::{PairRules, display_asset};
-use kraken_api::trading::{OrderSide, OrderStatus};
+use kraken_spot_api::trading::{OrderSide, OrderStatus};
 use trading_notify::messages::{Label, OrderState, OrderView, Side};
 
 /// How an order changed between two synchronizations

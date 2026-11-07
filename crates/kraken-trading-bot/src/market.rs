@@ -3,7 +3,7 @@
 //!
 //! In f64, as `yata` computes: they describe the market, the prices of the orders stay decimals.
 
-use kraken_api::market::{Candle, CandleInterval};
+use kraken_spot_api::market::{Candle, CandleInterval};
 use rust_decimal::prelude::ToPrimitive;
 use yata::core::Method;
 use yata::methods::{EMA, LinReg, RMA};

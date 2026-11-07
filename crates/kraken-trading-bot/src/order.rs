@@ -1,6 +1,6 @@
 //! The orders of the managers, as the bot uses them
 
-use kraken_api::trading::{Order, OrderSide, OrderStatus};
+use kraken_spot_api::trading::{Order, OrderSide, OrderStatus};
 use rust_decimal::Decimal;
 
 /// An order of a manager. With the `fciq` flag, the fees are in the quote currency

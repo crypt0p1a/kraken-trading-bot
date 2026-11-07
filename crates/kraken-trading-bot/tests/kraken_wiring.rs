@@ -1,6 +1,6 @@
 //! The bot on the real Kraken client, against a mocked Kraken: the requests it sends
 
-use kraken_api::RestOptions;
+use kraken_spot_api::RestOptions;
 use kraken_trading_bot::bot::{Bot, Outcome};
 use kraken_trading_bot::config::BotConfig;
 use kraken_trading_bot::exchange::KrakenExchange;
@@ -186,8 +186,8 @@ managers:
             txid: "OAAAAA-BBBBB-CCCCCC".into(),
             manager_id: 42,
             pair: "XBTUSD".into(),
-            side: kraken_api::trading::OrderSide::Buy,
-            status: kraken_api::trading::OrderStatus::Open,
+            side: kraken_spot_api::trading::OrderSide::Buy,
+            status: kraken_spot_api::trading::OrderStatus::Open,
             volume: "0.001".parse().unwrap(),
             volume_executed: Default::default(),
             cost: Default::default(),
@@ -294,7 +294,7 @@ async fn cancels_an_order_by_its_txid() {
 
 #[tokio::test]
 async fn reads_the_candles_of_fifteen_minutes() {
-    use kraken_api::market::CandleInterval;
+    use kraken_spot_api::market::CandleInterval;
     use kraken_trading_bot::exchange::Exchange;
     let server = kraken().await;
     let candles = exchange(&server)

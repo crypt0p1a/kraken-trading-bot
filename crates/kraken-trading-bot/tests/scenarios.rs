@@ -1,7 +1,7 @@
 //! The bot tick after tick against a simulated Kraken: synchronization, database, ledger and
 //! strategy together, while the market moves
 
-use kraken_api::trading::{OrderSide, OrderStatus};
+use kraken_spot_api::trading::{OrderSide, OrderStatus};
 use kraken_trading_bot::bot::{Bot, Outcome};
 use kraken_trading_bot::config::BotConfig;
 use kraken_trading_bot::exchange::SimulatedExchange;
@@ -47,7 +47,7 @@ async fn tick(bot: &mut Bot<SimulatedExchange>, id: i32) -> Outcome {
     bot.tick().await.unwrap().outcomes.remove(&id).unwrap()
 }
 
-fn open_orders(bot: &Bot<SimulatedExchange>, userref: i64) -> Vec<kraken_api::trading::Order> {
+fn open_orders(bot: &Bot<SimulatedExchange>, userref: i64) -> Vec<kraken_spot_api::trading::Order> {
     bot.exchange()
         .orders()
         .into_iter()
@@ -478,7 +478,7 @@ async fn trading_for_days_on_a_moving_market_only_makes_money() {
     for order in bot.exchange().orders() {
         assert_eq!(
             order.description.order_type,
-            kraken_api::trading::OrderType::Limit,
+            kraken_spot_api::trading::OrderType::Limit,
             "{order:?}"
         );
         assert!(

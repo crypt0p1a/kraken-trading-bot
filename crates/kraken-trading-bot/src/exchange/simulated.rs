@@ -1,11 +1,11 @@
 use super::{Exchange, ExchangeResult};
-use kraken_api::KrakenError;
-use kraken_api::account::{ExtendedBalance, FeeInfo, TradeVolume};
-use kraken_api::market::{
+use kraken_spot_api::KrakenError;
+use kraken_spot_api::account::{ExtendedBalance, FeeInfo, TradeVolume};
+use kraken_spot_api::market::{
     AssetPair, Candle, CandleInterval, PriceLevel, PublicTrade, Ticker, TradeLevel, Window,
     WindowCount,
 };
-use kraken_api::trading::{
+use kraken_spot_api::trading::{
     CloseTime, ClosedOrders, ClosedOrdersRequest, NewOrder, NewOrderAnswer, NewOrderDescription,
     Order, OrderDescription, OrderSide, OrderStatus, OrderType, TimeInForce,
 };

@@ -1,6 +1,6 @@
 //! Several Kraken accounts in one database: the same managers, nothing shared
 
-use kraken_api::trading::{OrderSide, OrderStatus};
+use kraken_spot_api::trading::{OrderSide, OrderStatus};
 use kraken_trading_bot::bot::Bot;
 use kraken_trading_bot::config::{BotConfig, ManagerConfig, ManagerMode};
 use kraken_trading_bot::exchange::SimulatedExchange;

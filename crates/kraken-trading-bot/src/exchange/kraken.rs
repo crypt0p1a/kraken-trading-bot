@@ -1,13 +1,13 @@
 use super::{Exchange, ExchangeResult};
-use kraken_api::account::{ApiKeyInfoRequest, ExtendedBalance, TradeVolume};
-use kraken_api::market::{
+use kraken_spot_api::account::{ApiKeyInfoRequest, ExtendedBalance, TradeVolume};
+use kraken_spot_api::market::{
     AssetPair, Candle, CandleInterval, CandlesRequest, PublicTrade, RecentTradesRequest, Ticker,
 };
-use kraken_api::trading::{
+use kraken_spot_api::trading::{
     ClosedOrders, ClosedOrdersRequest, NewOrder, NewOrderAnswer, OpenOrdersRequest, Order,
     OrderReference, QueryOrdersRequest,
 };
-use kraken_api::{PrivateApi, PublicApi, RateLimiter, RestOptions};
+use kraken_spot_api::{PrivateApi, PublicApi, RateLimiter, RestOptions};
 use std::collections::HashMap;
 use std::sync::Arc;
 

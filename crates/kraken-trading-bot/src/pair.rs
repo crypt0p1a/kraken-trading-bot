@@ -1,6 +1,6 @@
 //! The constraints of a Kraken pair on the orders
 
-use kraken_api::market::AssetPair;
+use kraken_spot_api::market::AssetPair;
 use rust_decimal::Decimal;
 
 #[derive(Debug, Clone, PartialEq)]

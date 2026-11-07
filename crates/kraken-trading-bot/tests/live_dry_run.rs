@@ -2,7 +2,7 @@
 //! environment or the `.env` file at the root of the repository:
 //! `cargo test -p kraken-trading-bot --test live_dry_run -- --ignored --nocapture`
 
-use kraken_api::RestOptions;
+use kraken_spot_api::RestOptions;
 use kraken_trading_bot::bot::{Bot, Outcome};
 use kraken_trading_bot::config::BotConfig;
 use kraken_trading_bot::exchange::{Exchange, KrakenExchange};
@@ -51,7 +51,7 @@ managers:
     .unwrap();
     let mut bot = Bot::new(exchange, Storage::open_in_memory().unwrap(), config);
     bot.prepare().await.unwrap();
-    let txids = |orders: Vec<kraken_api::trading::Order>| {
+    let txids = |orders: Vec<kraken_spot_api::trading::Order>| {
         let mut txids: Vec<_> = orders.into_iter().map(|it| it.txid).collect();
         txids.sort();
         txids

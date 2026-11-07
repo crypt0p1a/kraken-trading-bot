@@ -1,5 +1,5 @@
 //! Exact decimals: the amounts of the bot are computed with [`Decimal`], never with floats. The
-//! models of `kraken-api` already hold exact decimals, parsed from the strings of Kraken
+//! models of `kraken-spot-api` already hold exact decimals, parsed from the strings of Kraken
 
 use rust_decimal::Decimal;
 

@@ -10,7 +10,7 @@
 //! KRAKEN_BOT_DATABASE, RUST_LOG. For several Kraken accounts, trading the same managers:
 //! KRAKEN_BOT_ACCOUNTS=main,alice and KRAKEN_API_KEY_ALICE, KRAKEN_API_SECRET_ALICE
 
-use kraken_api::{RateLimiter, RestOptions};
+use kraken_spot_api::{RateLimiter, RestOptions};
 use kraken_trading_bot::bot::{Bot, Outcome};
 use kraken_trading_bot::clock::now_millis;
 use kraken_trading_bot::config::{AccountKey, BotConfig, Environment};

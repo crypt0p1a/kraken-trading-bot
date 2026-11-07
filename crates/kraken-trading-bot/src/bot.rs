@@ -17,8 +17,8 @@ use crate::storage::{
 use crate::strategy::{self, Action, Decision};
 use crate::sync::{self, SyncReport};
 use crate::{BotError, BotResult};
-use kraken_api::account::ExtendedBalance;
-use kraken_api::trading::{
+use kraken_spot_api::account::ExtendedBalance;
+use kraken_spot_api::trading::{
     ClosedOrdersRequest, NewOrder, OrderFlag, OrderSide, OrderStatus, OrderType, TimeInForce,
 };
 use rust_decimal::Decimal;
@@ -317,7 +317,7 @@ impl<E: Exchange> Bot<E> {
                 })?;
             if pair
                 .status
-                .is_some_and(|it| it != kraken_api::market::AssetPairStatus::Online)
+                .is_some_and(|it| it != kraken_spot_api::market::AssetPairStatus::Online)
             {
                 tracing::warn!(manager = manager.id, pair = %pair.altname, status = ?pair.status, "the pair isn't online");
             }
@@ -1097,8 +1097,8 @@ impl<E: Exchange> Bot<E> {
 }
 
 /// Kraken doesn't know the order as an open one
-fn is_unknown_order(error: &kraken_api::KrakenError) -> bool {
-    matches!(error, kraken_api::KrakenError::Api { body, .. } if body.contains("EOrder:Unknown order"))
+fn is_unknown_order(error: &kraken_spot_api::KrakenError) -> bool {
+    matches!(error, kraken_spot_api::KrakenError::Api { body, .. } if body.contains("EOrder:Unknown order"))
 }
 
 /// The bot only trades with limit orders, at the price it computed, with the fees in the quote:
@@ -1181,7 +1181,7 @@ fn log_balances(manager: &ManagerConfig, state: &ManagerState) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kraken_api::trading::Trigger;
+    use kraken_spot_api::trading::Trigger;
 
     fn limit() -> NewOrder {
         NewOrder {

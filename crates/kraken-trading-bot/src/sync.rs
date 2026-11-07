@@ -11,7 +11,7 @@ use crate::notify::{OrderEvent, change};
 use crate::order::BotOrder;
 use crate::storage::Storage;
 use crate::{BotError, BotResult};
-use kraken_api::trading::{CloseTime, ClosedOrdersRequest, Order};
+use kraken_spot_api::trading::{CloseTime, ClosedOrdersRequest, Order};
 use std::collections::{BTreeSet, HashSet};
 
 /// Margin of the orders closed since the previous synchronization, in seconds
@@ -173,8 +173,8 @@ impl From<crate::storage::StorageError> for BotError {
     }
 }
 
-impl From<kraken_api::KrakenError> for BotError {
-    fn from(error: kraken_api::KrakenError) -> Self {
+impl From<kraken_spot_api::KrakenError> for BotError {
+    fn from(error: kraken_spot_api::KrakenError) -> Self {
         BotError::Exchange(error)
     }
 }
@@ -201,7 +201,7 @@ mod tests {
         let txid = exchange.add_foreign_order(
             Some(userref),
             "XBTUSD",
-            kraken_api::trading::OrderSide::Buy,
+            kraken_spot_api::trading::OrderSide::Buy,
             d("0.001"),
             d("49000"),
         );
@@ -273,7 +273,7 @@ mod tests {
         let txid = exchange.add_foreign_order(
             Some(1),
             "XBTUSD",
-            kraken_api::trading::OrderSide::Buy,
+            kraken_spot_api::trading::OrderSide::Buy,
             d("0.001"),
             d("49000"),
         );
@@ -296,7 +296,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             storage.order(&txid).unwrap().unwrap().status,
-            kraken_api::trading::OrderStatus::Canceled
+            kraken_spot_api::trading::OrderStatus::Canceled
         );
     }
 
@@ -309,8 +309,8 @@ mod tests {
             txid: "OGHOST-AAAAA-BBBBBB".into(),
             manager_id: 1,
             pair: "XBTUSD".into(),
-            side: kraken_api::trading::OrderSide::Buy,
-            status: kraken_api::trading::OrderStatus::Open,
+            side: kraken_spot_api::trading::OrderSide::Buy,
+            status: kraken_spot_api::trading::OrderStatus::Open,
             volume: d("0.001"),
             volume_executed: Decimal::ZERO,
             cost: Decimal::ZERO,

@@ -86,7 +86,7 @@ mod tests {
     use crate::ledger::tests::{executed, order};
     use crate::order::BotOrder;
     use crate::planner::tests::{d, rules};
-    use kraken_api::trading::{OrderSide, OrderStatus};
+    use kraken_spot_api::trading::{OrderSide, OrderStatus};
 
     fn decide_with(
         balances: &Balances,

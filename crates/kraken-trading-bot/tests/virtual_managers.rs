@@ -1,7 +1,7 @@
 //! The virtual managers against a simulated Kraken: copies of the managers of the YAML file, added
 //! by the bot when the account has money no manager uses
 
-use kraken_api::trading::{OrderSide, OrderStatus};
+use kraken_spot_api::trading::{OrderSide, OrderStatus};
 use kraken_trading_bot::bot::{Bot, Outcome};
 use kraken_trading_bot::config::{BotConfig, ManagerConfig, VirtualId};
 use kraken_trading_bot::exchange::SimulatedExchange;

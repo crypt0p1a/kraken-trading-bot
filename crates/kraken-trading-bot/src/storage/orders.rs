@@ -1,7 +1,7 @@
 use super::{Result, Storage, StorageError, decimal, optional_decimal};
 use crate::clock::now_millis;
 use crate::order::BotOrder;
-use kraken_api::trading::{OrderSide, OrderStatus};
+use kraken_spot_api::trading::{OrderSide, OrderStatus};
 use rusqlite::{Row, params};
 
 fn side_name(side: OrderSide) -> &'static str {

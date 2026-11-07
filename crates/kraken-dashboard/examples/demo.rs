@@ -6,7 +6,7 @@
 //! cargo run -p kraken-dashboard -- demo.sqlite
 //! ```
 
-use kraken_api::trading::{OrderSide, OrderStatus};
+use kraken_spot_api::trading::{OrderSide, OrderStatus};
 use kraken_trading_bot::config::{ManagerConfig, ManagerMode};
 use kraken_trading_bot::ledger;
 use kraken_trading_bot::market::Indicators;

@@ -22,7 +22,7 @@ use crate::pair::PairRules;
 use crate::storage::{ActionRecord, Storage, VirtualManager};
 use crate::sync;
 use crate::{BotError, BotResult};
-use kraken_api::trading::{ClosedOrdersRequest, OrderSide};
+use kraken_spot_api::trading::{ClosedOrdersRequest, OrderSide};
 use rust_decimal::Decimal;
 use std::collections::{BTreeMap, HashSet};
 
@@ -215,7 +215,7 @@ async fn rebuild_id<E: Exchange>(
     exchange: &E,
     storage: &Storage,
     config: &BotConfig,
-    pairs: &std::collections::HashMap<String, kraken_api::market::AssetPair>,
+    pairs: &std::collections::HashMap<String, kraken_spot_api::market::AssetPair>,
     id: i32,
     orders: &[BotOrder],
     now_ms: i64,
@@ -369,7 +369,7 @@ pub async fn rebuild<E: Exchange>(
 mod tests {
     use super::*;
     use crate::planner::tests::d;
-    use kraken_api::trading::OrderStatus;
+    use kraken_spot_api::trading::OrderStatus;
 
     fn order(side: OrderSide, volume: &str, price: &str) -> BotOrder {
         BotOrder {

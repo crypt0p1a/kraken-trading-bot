@@ -1,7 +1,7 @@
 //! The trailing of the buys against a simulated Kraken: a buy the price left behind is cancelled,
 //! then placed again from the new price
 
-use kraken_api::trading::{OrderSide, OrderStatus};
+use kraken_spot_api::trading::{OrderSide, OrderStatus};
 use kraken_trading_bot::bot::{Bot, Outcome};
 use kraken_trading_bot::config::BotConfig;
 use kraken_trading_bot::exchange::SimulatedExchange;

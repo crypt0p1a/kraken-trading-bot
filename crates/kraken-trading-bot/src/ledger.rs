@@ -2,7 +2,7 @@
 //! ManagerLedger of cex-trading-bot, the fees being in the quote (`fciq`)
 
 use crate::order::BotOrder;
-use kraken_api::trading::OrderSide;
+use kraken_spot_api::trading::OrderSide;
 use rust_decimal::Decimal;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -106,7 +106,7 @@ pub fn compute(budget: Decimal, orders: &[BotOrder]) -> Balances {
 pub(crate) mod tests {
     use super::*;
     use crate::planner::tests::d;
-    use kraken_api::trading::OrderStatus;
+    use kraken_spot_api::trading::OrderStatus;
 
     pub fn order(
         time: f64,

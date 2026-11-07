@@ -1,6 +1,6 @@
 //! The notifications of the bot, tick after tick on a simulated Kraken
 
-use kraken_api::trading::OrderSide;
+use kraken_spot_api::trading::OrderSide;
 use kraken_trading_bot::bot::Bot;
 use kraken_trading_bot::config::BotConfig;
 use kraken_trading_bot::exchange::SimulatedExchange;

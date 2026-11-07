@@ -7,10 +7,12 @@ mod simulated;
 pub use kraken::KrakenExchange;
 pub use simulated::SimulatedExchange;
 
-use kraken_api::KrakenError;
-use kraken_api::account::{ExtendedBalance, TradeVolume};
-use kraken_api::market::{AssetPair, Candle, CandleInterval, PublicTrade, Ticker};
-use kraken_api::trading::{ClosedOrders, ClosedOrdersRequest, NewOrder, NewOrderAnswer, Order};
+use kraken_spot_api::KrakenError;
+use kraken_spot_api::account::{ExtendedBalance, TradeVolume};
+use kraken_spot_api::market::{AssetPair, Candle, CandleInterval, PublicTrade, Ticker};
+use kraken_spot_api::trading::{
+    ClosedOrders, ClosedOrdersRequest, NewOrder, NewOrderAnswer, Order,
+};
 use std::collections::HashMap;
 
 pub type ExchangeResult<T> = Result<T, KrakenError>;

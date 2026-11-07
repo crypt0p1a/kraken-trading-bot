@@ -39,7 +39,7 @@ pub mod sync;
 #[derive(Debug, thiserror::Error)]
 pub enum BotError {
     #[error("Kraken: {0}")]
-    Exchange(kraken_api::KrakenError),
+    Exchange(kraken_spot_api::KrakenError),
     #[error("database: {0}")]
     Storage(String),
     #[error("configuration: {0}")]

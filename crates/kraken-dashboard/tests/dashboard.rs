@@ -1,9 +1,9 @@
 //! The dashboard on a database written by the storage of the bot itself: a change of its schema
 //! breaks these tests, not the screen
 
-use kraken_api::trading::{OrderSide, OrderStatus};
 use kraken_dashboard::app::{App, Chart, now_millis};
 use kraken_dashboard::data::Database;
+use kraken_spot_api::trading::{OrderSide, OrderStatus};
 use kraken_trading_bot::config::{ManagerConfig, ManagerMode};
 use kraken_trading_bot::ledger;
 use kraken_trading_bot::order::BotOrder;

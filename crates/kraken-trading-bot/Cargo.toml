@@ -13,7 +13,7 @@ path = "src/main.rs"
 [dependencies]
 fastrand.workspace = true
 humantime-serde.workspace = true
-kraken-api.workspace = true
+kraken-spot-api.workspace = true
 trading-notify.workspace = true
 rusqlite.workspace = true
 rust_decimal.workspace = true
