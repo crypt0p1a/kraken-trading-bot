@@ -94,8 +94,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-      # the loop of the executable needs the real Kraken: checked by the docker job instead
-      IGNORED: --ignore-filename-regex kraken-trading-bot/src/main\.rs
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -109,17 +107,17 @@ jobs:
         run: cargo llvm-cov nextest --workspace --locked --profile ci --no-report
       - name: Reports (lcov, HTML, summary)
         run: |
-          cargo llvm-cov report --lcov --output-path lcov.info $IGNORED
-          cargo llvm-cov report --html --output-dir coverage $IGNORED
+          cargo llvm-cov report --lcov --output-path lcov.info
+          cargo llvm-cov report --html --output-dir coverage
           {
             echo "## Coverage"
             echo '```'
-            cargo llvm-cov report --summary-only $IGNORED
+            cargo llvm-cov report --summary-only
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-      # 94.8% of the lines when the bot left kraken-rust, whose library carried the 95%
+      # nothing left out: the executables run in the tests, the bot on a mocked Kraken
       - name: Minimum coverage
-        run: cargo llvm-cov report --summary-only --fail-under-lines 94 $IGNORED
+        run: cargo llvm-cov report --summary-only --fail-under-lines 96
       - uses: actions/upload-artifact@v4
         with:
           name: coverage

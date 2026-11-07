@@ -9,15 +9,11 @@
 
 use kraken_dashboard::app::App;
 use kraken_dashboard::data::Database;
-use kraken_dashboard::ui;
-use ratatui::DefaultTerminal;
+use kraken_dashboard::desk;
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::time::{Duration, Instant};
-
-/// The screen is drawn again this often, for the clock and the ticker tape
-const FRAME: Duration = Duration::from_millis(100);
+use std::time::Duration;
 
 const USAGE: &str = "kraken-dashboard [DATABASE] [--refresh SECONDS]
 
@@ -79,8 +75,23 @@ fn main() -> ExitCode {
     let mut app = App::new(options.database.display().to_string());
     app.refresh(&database, true);
 
-    let terminal = ratatui::init();
-    let result = run(terminal, &database, &mut app, options.refresh);
+    let mut terminal = ratatui::init();
+    let result = desk::run(
+        &mut terminal,
+        &database,
+        &mut app,
+        options.refresh,
+        |frame| {
+            // the presses only: the terminals sending the releases too would count each key twice
+            if event::poll(frame)?
+                && let Event::Key(key) = event::read()?
+                && key.kind == KeyEventKind::Press
+            {
+                return Ok(Some(key));
+            }
+            Ok(None)
+        },
+    );
     ratatui::restore();
 
     match result {
@@ -90,31 +101,4 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
-}
-
-fn run(
-    mut terminal: DefaultTerminal,
-    database: &Database,
-    app: &mut App,
-    refresh: Duration,
-) -> std::io::Result<()> {
-    let mut checked = Instant::now();
-    while !app.quit {
-        terminal.draw(|frame| ui::render(frame, app))?;
-
-        if event::poll(FRAME)?
-            && let Event::Key(key) = event::read()?
-            && key.kind == KeyEventKind::Press
-            && app.on_key(key)
-        {
-            app.refresh(database, true);
-            checked = Instant::now();
-        }
-        app.ask_tick(database);
-        if checked.elapsed() >= refresh {
-            app.refresh(database, false);
-            checked = Instant::now();
-        }
-    }
-    Ok(())
 }

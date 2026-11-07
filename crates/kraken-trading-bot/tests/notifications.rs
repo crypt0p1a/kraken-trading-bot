@@ -363,3 +363,18 @@ async fn a_summary_failing_doesnt_fail_the_tick() {
     drop(bot);
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+/// With several accounts, each notification tells which one it's about
+#[tokio::test]
+async fn names_the_account_of_each_notification() {
+    let (bot, recorded) = bot(exchange("1000"), false, "", ONE).await;
+    let mut bot = bot.with_account_label("alice");
+    bot.notify_started().await;
+    bot.tick().await.unwrap();
+    let titles = titles(&recorded);
+    assert!(titles.len() >= 2, "{titles:?}");
+    assert!(
+        titles.iter().all(|it| it.starts_with("[alice] ")),
+        "{titles:?}"
+    );
+}

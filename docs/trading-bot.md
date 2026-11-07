@@ -61,6 +61,7 @@ managers:
 | `KRAKEN_BOT_CONFIG` | `managers.yaml` | the YAML file |
 | `KRAKEN_BOT_DATABASE` | `kraken-bot.sqlite` | the SQLite database |
 | `KRAKEN_BOT_NTFY_TOPIC`, `KRAKEN_BOT_NTFY_TOKEN` | | the [notifications](#notifications) |
+| `KRAKEN_BOT_API_HOST` | `https://api.kraken.com` | another host speaking the API of Kraken: a mocked Kraken in the tests |
 | `RUST_LOG` | `info` | |
 
 ## Several accounts

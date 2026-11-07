@@ -13,8 +13,9 @@
 - **test report**: the JUnit reports of every platform (`.config/nextest.toml`, profile `ci`)
   published in a *Test results* check
 - **coverage**: [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov), summary in the job,
-  HTML and lcov reports as artifacts, at least 94% of the lines (the loop of `main.rs` aside, it
-  needs the real Kraken); sent to Codecov when the `CODECOV_TOKEN` secret is set
+  HTML and lcov reports as artifacts, at least 96% of the lines, nothing left out: the tests run
+  the executables, the bot on a mocked Kraken (`KRAKEN_BOT_API_HOST`); sent to Codecov when the
+  `CODECOV_TOKEN` secret is set
 - **audit**: `cargo audit` of the dependencies
 - **docker**: the image of the bot on amd64 and arm64. It must refuse to start without
   credentials, and `--check` must validate the pairs of `managers.example.yaml` on Kraken before

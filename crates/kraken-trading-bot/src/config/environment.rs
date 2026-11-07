@@ -16,6 +16,9 @@ pub struct Environment {
     pub ntfy_topic: Option<String>,
     /// KRAKEN_BOT_NTFY_TOKEN: access token of a protected topic
     pub ntfy_token: Option<String>,
+    /// KRAKEN_BOT_API_HOST, the real Kraken (https://api.kraken.com) by default: another host
+    /// speaking its API, a mocked Kraken in the tests
+    pub api_host: Option<String>,
 }
 
 /// A Kraken account and its API key. All of them run the same managers
@@ -132,6 +135,7 @@ impl Environment {
                 .to_path_buf(),
             ntfy_topic: get("KRAKEN_BOT_NTFY_TOPIC").map(str::to_string),
             ntfy_token: get("KRAKEN_BOT_NTFY_TOKEN").map(str::to_string),
+            api_host: get("KRAKEN_BOT_API_HOST").map(str::to_string),
         })
     }
 }
@@ -177,11 +181,16 @@ mod tests {
             ("KRAKEN_API_SECRET", "c2VjcmV0"),
             ("KRAKEN_BOT_CONFIG", "/config/managers.yaml"),
             ("KRAKEN_BOT_DATABASE", "/data/bot.sqlite"),
+            ("KRAKEN_BOT_API_HOST", "http://127.0.0.1:8080"),
         ]))
         .unwrap();
 
         assert_eq!(environment.config_path, Path::new("/config/managers.yaml"));
         assert_eq!(environment.database_path, Path::new("/data/bot.sqlite"));
+        assert_eq!(
+            environment.api_host.as_deref(),
+            Some("http://127.0.0.1:8080")
+        );
     }
 
     #[test]
@@ -193,6 +202,8 @@ mod tests {
         .unwrap();
         assert_eq!(environment.config_path, Path::new("managers.yaml"));
         assert_eq!(environment.database_path, Path::new("kraken-bot.sqlite"));
+        // the real Kraken
+        assert_eq!(environment.api_host, None);
 
         assert!(Environment::from_variables(&variables(&[("KRAKEN_API_KEY", "key")])).is_err());
         assert!(

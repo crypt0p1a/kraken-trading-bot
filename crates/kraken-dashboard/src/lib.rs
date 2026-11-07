@@ -7,10 +7,12 @@
 //! | [`stats`] | the P&L realized by the sells, the totals, the P&L over time |
 //! | [`app`] | what's selected and shown, the keys |
 //! | [`ui`] | the screen |
+//! | [`desk`] | the loop: the screen, the keys, the reads of the database |
 //! | [`format`], [`theme`] | the numbers and the times, the colors |
 
 pub mod app;
 pub mod data;
+pub mod desk;
 pub mod format;
 pub mod sort;
 pub mod stats;
