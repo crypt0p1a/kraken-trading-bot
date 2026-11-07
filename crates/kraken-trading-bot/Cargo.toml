@@ -5,6 +5,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+# not published on crates.io: only kraken-crypto, kraken-network and kraken-spot-api are
+publish = false
 
 [[bin]]
 name = "kraken-trading-bot"
