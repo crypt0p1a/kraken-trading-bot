@@ -1,0 +1,32 @@
+# Secret scanning of the repository and of its whole history: `gitleaks git` (see the CI).
+# The default rules of gitleaks, plus entropy based rules for the Kraken credentials.
+
+title = "kraken-trading-bot"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "kraken-private-key"
+description = "Kraken API private key: 64 bytes in base64"
+regex = '''(?:^|[^A-Za-z0-9+/])([A-Za-z0-9+/]{86}==)(?:[^A-Za-z0-9+/=]|$)'''
+secretGroup = 1
+entropy = 4.5
+
+[[rules]]
+id = "kraken-api-key"
+description = "Kraken API key: 56 base64 characters"
+regex = '''(?:^|[^A-Za-z0-9+/=])([A-Za-z0-9+/]{56})(?:[^A-Za-z0-9+/=]|$)'''
+secretGroup = 1
+entropy = 4.5
+
+[[rules]]
+id = "high-entropy-base64"
+description = "Long base64 string with a high entropy"
+regex = '''(?:^|[^A-Za-z0-9+/])([A-Za-z0-9+/]{40,}={0,2})(?:[^A-Za-z0-9+/=]|$)'''
+secretGroup = 1
+entropy = 5.0
+
+[[allowlists]]
+description = "Checksums of the dependencies"
+paths = ['''Cargo\.lock$''']

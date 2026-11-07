@@ -1,0 +1,11 @@
+#!/bin/sh
+# Refuses a commit holding a secret. Enable it with: git config core.hooksPath .githooks
+# Uses gitleaks if installed, else its Docker image.
+if command -v gitleaks >/dev/null 2>&1; then
+  exec gitleaks git --staged --config .gitleaks.toml --redact --no-banner
+elif command -v docker >/dev/null 2>&1; then
+  exec docker run --rm -v "$PWD:/repo" -w /repo ghcr.io/gitleaks/gitleaks:v8.28.0 \
+    git /repo --staged --config /repo/.gitleaks.toml --redact --no-banner
+else
+  echo "pre-commit: neither gitleaks nor docker found, secrets not checked" >&2
+fi
