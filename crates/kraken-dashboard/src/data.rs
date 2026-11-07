@@ -241,6 +241,18 @@ pub struct AccountPoint {
     pub cash: f64,
 }
 
+/// A Kraken account on its own, whatever is shown, to compare it with the others
+#[derive(Debug, Clone, PartialEq)]
+pub struct AccountLine {
+    pub name: String,
+    /// Its managers: (key, pair, budget)
+    pub managers: Vec<(ManagerKey, String, f64)>,
+    /// The range only, one point per bucket and manager, oldest first
+    pub snapshots: Vec<Snapshot>,
+    /// What it was worth over the range, per quote
+    pub series: Vec<AccountPoint>,
+}
+
 /// Everything shown, read at once
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Data {
@@ -256,6 +268,8 @@ pub struct Data {
     pub accounts: Vec<Account>,
     /// The range only, one point per bucket and quote, oldest first
     pub account_series: Vec<AccountPoint>,
+    /// Each account on its own, in the order of their ids
+    pub account_lines: Vec<AccountLine>,
     /// Whether the last order was only validated by Kraken (dry run), None before any order
     pub dry_run: Option<bool>,
     /// The state of the tick asked for from here: "idle", "refresh" (asked for), "pending" (under
@@ -401,12 +415,42 @@ impl Database {
             markets: self.markets(start, bucket).map_err(sql)?,
             accounts: self.accounts(account).map_err(sql)?,
             account_series: self.account_series(account, start, bucket).map_err(sql)?,
+            account_lines: self.account_lines(start, bucket).map_err(sql)?,
             names: self.names().map_err(sql)?,
             version: self.version,
             since: start,
         };
         transaction.finish().map_err(sql)?;
         Ok(data)
+    }
+
+    fn account_lines(&self, since: i64, bucket: i64) -> rusqlite::Result<Vec<AccountLine>> {
+        let mut names = self.names()?;
+        // the databases older than the accounts have a single, implicit one
+        if names.is_empty() {
+            names.push((1, "main".to_string()));
+        }
+        let managers = self.managers(None)?;
+        let snapshots = self.snapshots(None, since, bucket)?;
+        names
+            .into_iter()
+            .map(|(id, name)| {
+                Ok(AccountLine {
+                    name,
+                    managers: managers
+                        .iter()
+                        .filter(|it| account_of(it.id) == id)
+                        .map(|it| (it.id, it.pair.clone(), to_f64(it.budget)))
+                        .collect(),
+                    snapshots: snapshots
+                        .iter()
+                        .filter(|it| account_of(it.manager_id) == id)
+                        .copied()
+                        .collect(),
+                    series: self.account_series(Some(id), since, bucket)?,
+                })
+            })
+            .collect()
     }
 
     fn names(&self) -> rusqlite::Result<Vec<(i64, String)>> {

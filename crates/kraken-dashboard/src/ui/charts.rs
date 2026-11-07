@@ -1,16 +1,16 @@
-//! The chart, one of seven: the P&L over time, the portfolio, the price with the levels of the
+//! The chart, one of nine: the P&L over time, the portfolio, the price with the levels of the
 //! orders, the P&L of each sell, the portfolio if the market moves, the growth of each period, the
-//! portfolio crypto by crypto
+//! portfolio crypto by crypto, the heatmaps of the pairs and of the accounts
 
 use super::{panel, title};
 use crate::app::{App, Chart};
 use crate::data::{Side, percent, to_f64};
 use crate::format;
-use crate::stats::canonical;
+use crate::stats::{Tile, canonical};
 use crate::theme::{self, AMBER, CYAN, DOWN, FAINT, GOLD, UP};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Style, Stylize};
 use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::canvas::{Canvas, Line as Segment, Points};
@@ -118,6 +118,12 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
 fn grid(width: u16, height: u16, count: usize) -> Vec<usize> {
     let columns = (width / GRID_CHART_WIDTH).clamp(1, GRID_COLUMNS) as usize;
     let mut rows = count.div_ceil(columns);
+    // wide: the curves, then the four charts that hold in a quarter, then the heatmaps, which want
+    // the width
+    if columns == GRID_COLUMNS as usize && count == 9 && height / (rows as u16) >= GRID_CHART_HEIGHT
+    {
+        return vec![3, 4, 2];
+    }
     // too low for that: narrower charts, on fewer rows
     if height / (rows as u16) < GRID_CHART_HEIGHT {
         rows = ((height / GRID_CHART_HEIGHT).max(1) as usize).min(count);
@@ -149,6 +155,8 @@ fn render_chart(frame: &mut Frame, app: &App, area: Rect, chart: Chart) {
         Chart::Scenarios => render_scenarios(frame, app, area),
         Chart::Growth => render_growth(frame, app, area),
         Chart::Allocation => render_allocation(frame, app, area),
+        Chart::HeatPairs => render_heat_pairs(frame, app, area),
+        Chart::HeatAccounts => render_heat_accounts(frame, app, area),
     }
 }
 
@@ -806,6 +814,141 @@ fn render_growth(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 /// The columns of the plot of a chart of bars, without the borders and the labels of the values
+/// Under this, a variation stays pale: a calm market isn't painted as a big move
+const HEAT_SCALE: f64 = 0.5;
+
+fn render_heat_pairs(frame: &mut Frame, app: &App, area: Rect) {
+    let quote = app.model.totals.first().map_or("", |it| it.quote.as_str());
+    let tiles = app.model.pair_tiles(quote);
+    render_heatmap(frame, app, area, "HEATMAP PAIRS", &tiles);
+}
+
+fn render_heat_accounts(frame: &mut Frame, app: &App, area: Rect) {
+    let quote = app.model.totals.first().map_or("", |it| it.quote.as_str());
+    let tiles = app.model.account_tiles(quote);
+    render_heatmap(frame, app, area, "HEATMAP ACCOUNTS", &tiles);
+}
+
+/// Where each weight goes in the area, its share of it, in the order of the weights: the
+/// heaviest half on one side, the rest on the other, along the longest side. A cell is about twice
+/// as high as wide. A place too small for what's left is empty
+fn treemap(area: Rect, weights: &[f64]) -> Vec<Rect> {
+    fn place(area: Rect, items: &[(usize, f64)], places: &mut [Rect]) {
+        let [(index, _)] = items else {
+            let total: f64 = items.iter().map(|it| it.1).sum();
+            if items.is_empty() {
+                return;
+            }
+            // the first items up to half of the weight, at least one on each side
+            let mut before = 0.0;
+            let mut count = 0;
+            while count < items.len() - 1 && (count == 0 || before < total / 2.0) {
+                before += items[count].1;
+                count += 1;
+            }
+            let share = before / total;
+            let cut =
+                |size: u16| ((f64::from(size) * share).round() as u16).clamp(1, size.max(2) - 1);
+            let [first, second] = if area.width >= area.height.saturating_mul(2) && area.width > 1 {
+                Layout::horizontal([Constraint::Length(cut(area.width)), Constraint::Fill(1)])
+                    .areas(area)
+            } else {
+                Layout::vertical([Constraint::Length(cut(area.height)), Constraint::Fill(1)])
+                    .areas(area)
+            };
+            place(first, &items[..count], places);
+            place(second, &items[count..], places);
+            return;
+        };
+        places[*index] = area;
+    }
+
+    let items: Vec<(usize, f64)> = weights.iter().copied().enumerate().collect();
+    let mut places = vec![Rect::default(); weights.len()];
+    place(area, &items, &mut places);
+    places
+}
+
+/// From nothing to the full color of its sign, at `scale`, and what's readable on it. The root
+/// makes the small moves visible
+fn heat_colors(value: f64, scale: f64) -> (Color, Color) {
+    let (red, green, blue) = if value >= 0.0 {
+        (0.0, 230.0, 118.0)
+    } else {
+        (255.0, 69.0, 58.0)
+    };
+    let strength = (value.abs() / scale).min(1.0).sqrt();
+    let mix = |from: f64, to: f64| (from + (to - from) * strength) as u8;
+    (
+        Color::Rgb(mix(30.0, red), mix(38.0, green), mix(52.0, blue)),
+        if strength > 0.55 {
+            Color::Black
+        } else {
+            theme::TEXT
+        },
+    )
+}
+
+/// A tile per pair or account, in rows and columns: its size says what it's worth, its color how it
+/// moved over the range
+fn render_heatmap(frame: &mut Frame, app: &App, area: Rect, name: &str, tiles: &[Tile]) {
+    let name = name.to_string();
+    if tiles.is_empty() {
+        empty(frame, area, block(app, name), "NOTHING WORTH ANYTHING YET");
+        return;
+    }
+    let scale = tiles
+        .iter()
+        .filter_map(|it| it.percent)
+        .fold(HEAT_SCALE, |scale, it| scale.max(it.abs()));
+    let block = block_with(
+        app,
+        name,
+        vec![Span::styled(format!("±{scale:.2}%"), theme::dim())],
+    );
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let weights: Vec<f64> = tiles.iter().map(|it| it.value).collect();
+    let places = treemap(inner, &weights);
+    for (tile, place) in tiles.iter().zip(places) {
+        if place.is_empty() {
+            continue;
+        }
+        // a line of the panel between two tiles, none on the edges
+        let shown = Rect {
+            width: place.width - u16::from(place.width > 2 && place.right() < inner.right()),
+            height: place.height - u16::from(place.height > 2 && place.bottom() < inner.bottom()),
+            ..place
+        };
+        let (background, text) = match tile.percent {
+            Some(percent) => heat_colors(percent, scale),
+            None => (theme::SELECTED, theme::TEXT),
+        };
+        let percent = tile.percent.map_or("—".to_string(), format::percent);
+        let mut lines = vec![
+            Line::from(tile.name.clone()).bold(),
+            Line::from(format::money(tile.value)),
+            Line::from(percent.clone()).bold(),
+        ];
+        match shown.height {
+            0 | 1 => lines = vec![Line::from(format!("{} {percent}", tile.name)).bold()],
+            2 => {
+                lines.remove(1);
+            }
+            _ => {}
+        }
+        let top = shown.height.saturating_sub(lines.len() as u16) / 2;
+        frame.render_widget(
+            Paragraph::new(lines)
+                .alignment(Alignment::Center)
+                .style(Style::new().fg(text).bg(background))
+                .block(Block::new().padding(ratatui::widgets::Padding::top(top))),
+            shown,
+        );
+    }
+}
+
 /// The color of a layer of the portfolio: always the same for a crypto, from a tick to the next
 fn layer_color(name: &str, quote: &str) -> Color {
     match name {
@@ -1020,21 +1163,59 @@ mod tests {
     use super::*;
 
     #[test]
+    fn gives_each_tile_its_share_of_the_area() {
+        let area = Rect::new(2, 3, 80, 20);
+        let weights = [232.0, 95.0, 19.0, 4.0];
+        let places = treemap(area, &weights);
+        let surface = |place: &Rect| u32::from(place.width) * u32::from(place.height);
+
+        // the whole area, no tile over another, each inside
+        assert_eq!(places.iter().map(surface).sum::<u32>(), surface(&area));
+        for (index, place) in places.iter().enumerate() {
+            assert!(area.contains(place.as_position()), "{place:?}");
+            assert!(place.right() <= area.right() && place.bottom() <= area.bottom());
+            for other in &places[index + 1..] {
+                assert!(!place.intersects(*other), "{place:?} {other:?}");
+            }
+        }
+        // the heavier, the larger, about in proportion
+        assert!(surface(&places[0]) > surface(&places[1]));
+        assert!(surface(&places[1]) > surface(&places[2]));
+        let share = f64::from(surface(&places[0])) / f64::from(surface(&area));
+        assert!((share - 232.0 / 350.0).abs() < 0.1, "{share}");
+
+        // alone: everything
+        assert_eq!(treemap(area, &[1.0]), [area]);
+        assert!(treemap(area, &[]).is_empty());
+        // no room: never panics, nothing outside
+        for size in [
+            Rect::new(0, 0, 1, 1),
+            Rect::new(0, 0, 2, 1),
+            Rect::new(0, 0, 1, 2),
+        ] {
+            for place in treemap(size, &weights) {
+                assert!(place.right() <= size.right() && place.bottom() <= size.bottom());
+            }
+        }
+    }
+
+    #[test]
     fn lays_every_chart_out_for_the_size_of_the_screen() {
-        // wide, however wide: the three curves above the four others
-        assert_eq!(grid(160, 44, 7), [3, 4]);
-        assert_eq!(grid(200, 44, 7), [3, 4]);
-        assert_eq!(grid(300, 44, 7), [3, 4]);
+        // wide, however wide: the curves, the four others, the heatmaps
+        assert_eq!(grid(160, 44, 9), [3, 4, 2]);
+        assert_eq!(grid(200, 44, 9), [3, 4, 2]);
+        assert_eq!(grid(300, 44, 9), [3, 4, 2]);
         // less wide: the fuller rows at the bottom
-        assert_eq!(grid(159, 44, 7), [2, 2, 3]);
-        assert_eq!(grid(100, 44, 7), [1, 2, 2, 2]);
-        // narrow and high: one above the other
-        assert_eq!(grid(39, 70, 7), [1; 7]);
+        assert_eq!(grid(159, 44, 9), [3, 3, 3]);
+        assert_eq!(grid(100, 44, 9), [2, 2, 2, 3]);
+        // narrow and high: one above the other, as long as there's room
+        assert_eq!(grid(39, 90, 9), [1; 9]);
         // low: narrower charts rather than charts without room for a curve
-        assert_eq!(grid(100, 25, 7), [3, 4]);
+        assert_eq!(grid(100, 25, 9), [4, 5]);
+        assert_eq!(grid(200, 25, 9), [4, 5]);
         // nothing lost, whatever the size
         for (width, height) in [(100, 22), (120, 30), (200, 50), (400, 100), (1, 1)] {
-            assert_eq!(grid(width, height, 7).iter().sum::<usize>(), 7);
+            assert_eq!(grid(width, height, 9).iter().sum::<usize>(), 9);
         }
     }
 

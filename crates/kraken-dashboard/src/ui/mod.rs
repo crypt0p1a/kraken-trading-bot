@@ -575,7 +575,7 @@ fn render_help(frame: &mut Frame, area: Rect) {
         ("esc", "back to all the managers"),
         (
             "c v b",
-            "the chart at the top, in the middle, at the bottom: P&L, portfolio, price, sells, if the market moves, growth, by crypto",
+            "the chart at the top, in the middle, at the bottom: P&L, portfolio, price, sells, if the market moves, growth, by crypto, heatmaps of the pairs and of the accounts",
         ),
         ("d", "every chart on the screen, d or esc back to the desk"),
         ("1 … 5", "range of the charts: 1H 24H 7D 30D ALL"),

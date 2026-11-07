@@ -493,11 +493,11 @@ fn shows_a_column_of_different_charts() {
     assert!(text.contains("IF THE MARKET MOVES · USD"), "{text}");
     assert!(text.contains("XBTUSD · #1"), "{text}");
 
-    // each key its own place, never a chart of another: back at the start in 5 presses, the 7
+    // each key its own place, never a chart of another: back at the start in 7 presses, the 9
     // charts without the 2 of the other places
     let charts = app.charts;
     for key in ['c', 'v', 'b'] {
-        for _ in 0..5 {
+        for _ in 0..7 {
             app.on_key(KeyEvent::from(KeyCode::Char(key)));
             let [first, second, third] = app.charts;
             assert!(first != second && first != third && second != third);
@@ -1002,6 +1002,8 @@ fn goes_from_the_desk_to_every_chart_and_back() {
         "SELLS",
         "IF THE MARKET MOVES · USD",
         "XBTUSD · #1",
+        "HEATMAP PAIRS",
+        "HEATMAP ACCOUNTS",
     ] {
         assert!(text.contains(title), "{title}: {text}");
     }
@@ -1038,4 +1040,72 @@ fn goes_from_the_desk_to_every_chart_and_back() {
         ratatui::crossterm::event::KeyModifiers::CONTROL,
     ));
     assert!(app.quit);
+}
+
+#[test]
+fn shows_a_heatmap_of_the_pairs_and_of_the_accounts() {
+    let fixture = path("heatmaps");
+    let main = write(&fixture.path);
+    let _alice = second_account(&fixture.path);
+    let (mut app, database) = app(&fixture.path);
+
+    // both managers hold the pair: one tile, what they hold at 76100, the price moved from 75800
+    let pairs = app.model.pair_tiles("USD");
+    assert_eq!(pairs.len(), 1);
+    assert_eq!(pairs[0].name, "XBTUSD");
+    assert!(
+        (pairs[0].value - 0.0004 * 76_100.0).abs() < 1e-6,
+        "{pairs:?}"
+    );
+    let moved = (76_100.0 / 75_800.0 - 1.0) * 100.0;
+    assert!(
+        (pairs[0].percent.unwrap() - moved).abs() < 1e-9,
+        "{pairs:?}"
+    );
+
+    // both accounts, the heaviest first, whatever account is shown
+    for _ in 0..2 {
+        let accounts = app.model.account_tiles("USD");
+        let names: Vec<&str> = accounts.iter().map(|it| it.name.as_str()).collect();
+        assert_eq!(names, ["alice", "main"]);
+        assert_eq!(accounts[0].value, 500.0);
+        // a single tick: nothing to compare it with
+        assert_eq!(accounts[0].percent, None);
+        assert!(accounts[1].percent.is_some());
+        press(&mut app, &database, 'a');
+    }
+    assert_eq!(app.view, Some(2));
+
+    // alice holds nothing: no tile at all
+    assert!(app.model.pair_tiles("USD").is_empty());
+    app.charts[0] = Chart::HeatPairs;
+    app.charts[1] = Chart::HeatAccounts;
+    let text = screen(&app, 200, 50);
+    assert!(text.contains("NOTHING WORTH ANYTHING YET"), "{text}");
+
+    // on the screen, on every size it's drawn on
+    press(&mut app, &database, 'a');
+    let text = screen(&app, 200, 50);
+    assert!(text.contains("HEATMAP PAIRS"), "{text}");
+    assert!(text.contains("XBTUSD"), "{text}");
+    assert!(text.contains("HEATMAP ACCOUNTS"), "{text}");
+    assert!(text.contains("alice"), "{text}");
+    for (width, height) in [(100, 28), (130, 34), (300, 80)] {
+        screen(&app, width, height);
+    }
+
+    // a deposit makes the tile larger, not greener
+    let before = app.model.account_tiles("USD")[1].percent.unwrap();
+    main.record_account(&AccountRecord {
+        at: now_millis(),
+        quote: "ZUSD".into(),
+        cash: d("10000"),
+        holdings: d("0"),
+    })
+    .unwrap();
+    app.refresh(&database, true);
+    let accounts = app.model.account_tiles("USD");
+    assert_eq!(accounts[0].name, "main");
+    assert_eq!(accounts[0].value, 10_000.0);
+    assert_eq!(accounts[0].percent.unwrap(), before);
 }

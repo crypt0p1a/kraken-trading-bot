@@ -48,6 +48,30 @@ pub fn split(pair: &str) -> (String, String) {
     (pair, String::new())
 }
 
+/// A tile of a heatmap: what something weighs, and how it moved over the range
+#[derive(Debug, Clone, PartialEq)]
+pub struct Tile {
+    pub name: String,
+    /// In the quote
+    pub value: f64,
+    /// In %, None when the range doesn't have two points to compare
+    pub percent: Option<f64>,
+}
+
+/// Under a cent there's nothing to show: what's left of a sale
+const NOTHING: f64 = 0.01;
+
+/// The tiles worth something, the heaviest first, then by name
+fn tiles(mut tiles: Vec<Tile>) -> Vec<Tile> {
+    tiles.retain(|it| it.value >= NOTHING);
+    tiles.sort_by(|a, b| {
+        b.value
+            .total_cmp(&a.value)
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    tiles
+}
+
 /// What the account was made of over time, a layer per crypto, then its quote
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Allocation {
@@ -495,6 +519,83 @@ impl Model {
             .accounts
             .iter()
             .find(|it| asset(&it.quote) == quote)
+    }
+
+    /// What the managers shown hold of each pair, with how its price moved over the range
+    pub fn pair_tiles(&self, quote: &str) -> Vec<Tile> {
+        let mut held: BTreeMap<String, f64> = BTreeMap::new();
+        for manager in &self.data.managers {
+            if self.quotes.get(&manager.id).is_some_and(|it| it == quote) {
+                *held.entry(canonical(&manager.pair)).or_default() +=
+                    to_f64(manager.base() * manager.last_price);
+            }
+        }
+        tiles(
+            held.into_iter()
+                .map(|(name, value)| {
+                    let prices = self
+                        .data
+                        .markets
+                        .iter()
+                        .find(|it| canonical(&it.key) == name)
+                        .map(|it| it.prices.as_slice())
+                        .unwrap_or_default();
+                    let percent = match (prices.first(), prices.last()) {
+                        (Some(first), Some(last)) if prices.len() > 1 && first.1 > 0.0 => {
+                            Some((last.1 / first.1 - 1.0) * 100.0)
+                        }
+                        _ => None,
+                    };
+                    Tile {
+                        name,
+                        value,
+                        percent,
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    /// What each account is worth, whatever account is shown, with how it grew over the range. From
+    /// its P&L, like the growth: money deposited isn't growth
+    pub fn account_tiles(&self, quote: &str) -> Vec<Tile> {
+        tiles(
+            self.data
+                .account_lines
+                .iter()
+                .map(|account| {
+                    let budgets: HashMap<ManagerKey, f64> = account
+                        .managers
+                        .iter()
+                        .filter(|(_, pair, _)| split(pair).1 == quote)
+                        .map(|(id, _, budget)| (*id, *budget))
+                        .collect();
+                    let snapshots: Vec<&Snapshot> = account
+                        .snapshots
+                        .iter()
+                        .filter(|it| budgets.contains_key(&it.manager_id))
+                        .collect();
+                    let capital: Vec<(f64, f64)> = account
+                        .series
+                        .iter()
+                        .filter(|it| asset(&it.quote) == quote)
+                        .map(|it| (it.at as f64, it.value))
+                        .collect();
+                    let pnl = pnl_series(&snapshots, &budgets);
+                    // the first point against the last one: a single period
+                    let ends: Vec<(f64, f64)> = match (pnl.first(), pnl.last()) {
+                        (Some(first), Some(last)) if pnl.len() > 1 => vec![*first, *last],
+                        _ => Vec::new(),
+                    };
+                    let moved = growth(&ends, &capital, budgets.values().sum(), 1);
+                    Tile {
+                        name: account.name.clone(),
+                        value: capital.last().map_or(0.0, |it| it.1),
+                        percent: moved.first().map(|it| it.percent),
+                    }
+                })
+                .collect(),
+        )
     }
 
     /// What the whole account was made of, at `columns` moments from `since` to `now`

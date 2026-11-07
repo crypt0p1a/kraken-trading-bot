@@ -44,12 +44,16 @@ pub enum Chart {
     Growth,
     /// What the portfolio was made of over time, crypto by crypto
     Allocation,
+    /// What each pair weighs in the portfolio, and how its price moved
+    HeatPairs,
+    /// What each account weighs, and how it grew
+    HeatAccounts,
 }
 
 impl Chart {
     /// Every chart, in the order of the screen showing them all: the curves first, on the row with
     /// the most room
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 9] = [
         Self::Portfolio,
         Self::Pnl,
         Self::Price,
@@ -57,6 +61,8 @@ impl Chart {
         Self::Growth,
         Self::Trades,
         Self::Scenarios,
+        Self::HeatPairs,
+        Self::HeatAccounts,
     ];
 
     fn next(self) -> Self {
@@ -67,7 +73,9 @@ impl Chart {
             Self::Trades => Self::Scenarios,
             Self::Scenarios => Self::Growth,
             Self::Growth => Self::Allocation,
-            Self::Allocation => Self::Pnl,
+            Self::Allocation => Self::HeatPairs,
+            Self::HeatPairs => Self::HeatAccounts,
+            Self::HeatAccounts => Self::Pnl,
         }
     }
 }
