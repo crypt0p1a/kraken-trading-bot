@@ -4,9 +4,9 @@
 mod common;
 
 use common::{PERMISSIONS, kraken, kraken_with};
-use kraken_trading_bot::storage::{FORCED_TICK, Storage};
+use kraken_trading_bot::storage::Storage;
 use std::path::PathBuf;
-use std::process::{Command, Output, Stdio};
+use std::process::{Command, Output};
 
 /// A folder of its own for each test, removed at the end
 struct Folder(PathBuf);
@@ -197,7 +197,9 @@ async fn wait_for(lines: &Lines, text: &str, times: usize) {
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn ticks_until_it_is_asked_to_stop() {
+    use kraken_trading_bot::storage::FORCED_TICK;
     use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
     use std::sync::{Arc, Mutex};
 
     let folder = Folder::new("loop");

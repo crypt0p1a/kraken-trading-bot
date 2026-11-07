@@ -373,5 +373,8 @@ async fn names_the_account_of_each_notification() {
     bot.tick().await.unwrap();
     let titles = titles(&recorded);
     assert!(titles.len() >= 2, "{titles:?}");
-    assert!(titles.iter().all(|it| it.starts_with("[alice] ")), "{titles:?}");
+    assert!(
+        titles.iter().all(|it| it.starts_with("[alice] ")),
+        "{titles:?}"
+    );
 }
