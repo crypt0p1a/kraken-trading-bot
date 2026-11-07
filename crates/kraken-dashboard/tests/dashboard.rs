@@ -1,7 +1,7 @@
 //! The dashboard on a database written by the storage of the bot itself: a change of its schema
 //! breaks these tests, not the screen
 
-use kraken_dashboard::app::{App, Chart, now_millis};
+use kraken_dashboard::app::{App, Chart, Panel, Range, now_millis};
 use kraken_dashboard::data::Database;
 use kraken_spot_api::trading::{OrderSide, OrderStatus};
 use kraken_trading_bot::config::{ManagerConfig, ManagerMode};
@@ -1108,4 +1108,44 @@ fn shows_a_heatmap_of_the_pairs_and_of_the_accounts() {
     assert_eq!(accounts[0].name, "main");
     assert_eq!(accounts[0].value, 10_000.0);
     assert_eq!(accounts[0].percent.unwrap(), before);
+}
+
+fn key(code: char) -> KeyEvent {
+    KeyEvent::from(KeyCode::Char(code))
+}
+
+/// The loop of `main`, on a screen of the tests: keys pressed one after the other, then `q`
+#[test]
+fn runs_the_desk_until_q() {
+    let fixture = path("desk");
+    let _storage = write(&fixture.path);
+    let (mut app, database) = app(&fixture.path);
+    let mut terminal = Terminal::new(TestBackend::new(200, 50)).unwrap();
+    let mut keys = [None, Some('d'), Some('d'), Some('t'), Some('3'), None].into_iter();
+    let mut waits = Vec::new();
+    kraken_dashboard::desk::run(
+        &mut terminal,
+        &database,
+        &mut app,
+        // the database checked at every frame
+        std::time::Duration::ZERO,
+        |wait| {
+            waits.push(wait);
+            Ok(match keys.next() {
+                Some(pressed) => pressed.map(key),
+                None => Some(key('q')),
+            })
+        },
+    )
+    .unwrap();
+
+    assert!(app.quit);
+    assert_eq!(waits.len(), 7);
+    assert!(waits.iter().all(|it| *it == kraken_dashboard::desk::FRAME));
+    // t asked the bot for a tick, 3 read the last 7 days
+    assert_eq!(app.model.data.forced_tick.as_deref(), Some("refresh"));
+    assert_eq!(app.range, Range::Week);
+    let buffer = terminal.backend().buffer();
+    let text: String = buffer.content().iter().map(|it| it.symbol()).collect();
+    assert!(text.contains("TRADING DESK"));
 }
