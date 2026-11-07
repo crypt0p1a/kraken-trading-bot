@@ -132,6 +132,20 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 
+  screenshots:
+    name: Screenshots of the dashboard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # the screens of this change, to compare with assets/screenshots
+      - run: scripts/screenshots.sh screenshots
+      - uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: screenshots
+
   docker:
     name: Docker image (${{ matrix.arch }})
     runs-on: ${{ matrix.os }}

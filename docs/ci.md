@@ -17,6 +17,8 @@
   the executables, the bot on a mocked Kraken (`KRAKEN_BOT_API_HOST`); sent to Codecov when the
   `CODECOV_TOKEN` secret is set
 - **audit**: `cargo audit` of the dependencies
+- **screenshots**: the screens of the dashboard on the demo database (`scripts/screenshots.sh`), as
+  an artifact: what a change looks like, to compare with `assets/screenshots`
 - **docker**: the image of the bot on amd64 and arm64. It must refuse to start without
   credentials, and `--check` must validate the pairs of `managers.example.yaml` on Kraken before
   Kraken refuses its fake key. The cache mounts of the Dockerfile (cargo registry and target) and

@@ -10,6 +10,8 @@ and the bot adds **virtual managers** when the account has money no manager uses
 It runs on [`kraken-spot-api`](https://crates.io/crates/kraken-spot-api), the Kraken Spot REST
 client of [kraken-rust](https://github.com/crypt0p1a/kraken-rust), from crates.io.
 
+![The dashboard: the key figures, the managers, the orders, the markets and the tape](assets/screenshots/desk.svg)
+
 ## Quick start
 
 ```sh
@@ -22,6 +24,18 @@ docker compose exec kraken-trading-bot kraken-dashboard   # the dashboard, in th
 
 Everything else, from the configuration to the database, is in the
 [documentation of the bot](docs/trading-bot.md).
+
+## Screenshots
+
+The dashboard on its demo database, 7 days of a simulated market traded by the strategy of the bot:
+
+| Every chart (`d`) | A manager focused on (`⏎`) |
+|---|---|
+| ![Every chart: portfolio, P&L, price, by crypto, growth, sells, if the market moves, heatmaps](assets/screenshots/charts.svg) | ![A manager focused on: its figures, its chart, its orders](assets/screenshots/focus.svg) |
+
+They're drawn, not taken: `scripts/screenshots.sh` renders the screens of the dashboard as SVG
+images in `assets/screenshots`, from the demo database. Run it before a release, and whenever a
+screen changes.
 
 ## Keeping the machine awake
 
