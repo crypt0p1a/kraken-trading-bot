@@ -23,6 +23,31 @@ docker compose exec kraken-trading-bot kraken-dashboard   # the dashboard, in th
 Everything else, from the configuration to the database, is in the
 [documentation of the bot](docs/trading-bot.md).
 
+## Keeping the machine awake
+
+The bot runs in Docker: while the machine sleeps, it's frozen and places nothing, its orders
+already on Kraken staying there. It catches up at the first tick after the wake up. To keep the
+machine awake while it runs:
+
+```sh
+# macOS: no sleep as long as the command runs (-i: idle, -s: on mains power), the screen may turn off
+caffeinate -is docker compose logs -f
+caffeinate -is docker compose exec kraken-trading-bot kraken-dashboard
+
+# macOS: never on mains power, until it's set back (`pmset -g` shows the current value first)
+sudo pmset -c sleep 0
+
+# Linux (systemd): no sleep as long as the command runs
+systemd-inhibit --what=idle:sleep --why="kraken-trading-bot" docker compose logs -f
+
+# Windows (PowerShell, as administrator): never on mains power, until it's set back
+powercfg /change standby-timeout-ac 0
+```
+
+Closing the lid of a laptop still puts it to sleep, unless it's on mains power with an external
+screen. A machine that never sleeps, a small server, is the right place for a bot trading real
+money.
+
 ## Crates
 
 ```text
