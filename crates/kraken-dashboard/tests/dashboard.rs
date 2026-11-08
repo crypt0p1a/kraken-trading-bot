@@ -522,13 +522,11 @@ fn the_charts_dont_move_between_two_frames() {
     let _storage = write(&fixture.path);
     let (mut app, _database) = app(&fixture.path);
     app.charts = [Chart::Portfolio, Chart::Price, Chart::Trades];
-    // without the header and the prices scrolling
+    // without the header and the prices scrolling, nor the footer: their clocks tick, "SYNCED 1s AGO"
+    // on a slow machine
     let charts = |app: &App| {
-        screen(app, 180, 48)
-            .lines()
-            .skip(2)
-            .map(String::from)
-            .collect::<Vec<_>>()
+        let lines: Vec<String> = screen(app, 180, 48).lines().map(String::from).collect();
+        lines[2..lines.len() - 1].to_vec()
     };
     let first = charts(&app);
     for _ in 0..20 {
