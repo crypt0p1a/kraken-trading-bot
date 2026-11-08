@@ -1129,6 +1129,7 @@ fn runs_the_desk_until_q() {
         &mut app,
         // the database checked at every frame
         std::time::Duration::ZERO,
+        None,
         |wait| {
             waits.push(wait);
             Ok(match keys.next() {
@@ -1372,4 +1373,91 @@ fn sorts_on_every_column() {
             }
         }
     }
+}
+
+/// A run changes the screen, the next one starts from it
+#[test]
+fn keeps_what_the_screen_shows_from_a_run_to_the_next() {
+    use kraken_dashboard::settings;
+    let fixture = path("settings");
+    let main = write(&fixture.path);
+    let _alice = second_account(&fixture.path);
+    drop(main);
+    let file = settings::path_of(&fixture.path);
+    let _ = std::fs::remove_file(&file);
+
+    let (mut app, database) = app(&fixture.path);
+    let mut terminal = Terminal::new(TestBackend::new(200, 50)).unwrap();
+    // another chart on top, 7 days, the second account, the idle decisions, the orders by price
+    let mut keys = [
+        KeyEvent::from(KeyCode::Char('c')),
+        key('3'),
+        key('a'),
+        key('a'),
+        key('i'),
+        KeyEvent::from(KeyCode::Tab),
+        KeyEvent::from(KeyCode::Right),
+        key('d'),
+    ]
+    .into_iter();
+    kraken_dashboard::desk::run(
+        &mut terminal,
+        &database,
+        &mut app,
+        std::time::Duration::from_secs(60),
+        Some(&file),
+        |_| Ok(Some(keys.next().unwrap_or_else(|| key('q')))),
+    )
+    .unwrap();
+    let left = app.settings();
+    assert_eq!(left.account, Some(2));
+    assert!(file.exists());
+
+    // the next run, as main starts it
+    let mut next = App::new("next".into());
+    next.refresh(&database, true);
+    next.apply(settings::load(&file));
+    next.refresh(&database, true);
+    assert_eq!(next.settings(), left);
+    // after the portfolio, the price being shown below: the sells
+    assert_eq!(next.charts[0], Chart::Trades);
+    assert_eq!(next.range, Range::Week);
+    assert_eq!(next.view, Some(2));
+    assert!(next.show_idle && next.all_charts);
+    assert_eq!(next.sort(Panel::Orders).column, 1);
+    // the account shown, read from the database
+    assert_eq!(next.model.data.managers.len(), 1);
+    let _ = std::fs::remove_file(file);
+}
+
+#[test]
+fn starts_from_the_defaults_for_what_doesnt_fit_the_database_anymore() {
+    use kraken_dashboard::settings::Settings;
+    use kraken_dashboard::sort::Sort;
+    let fixture = path("settings-gone");
+    let _storage = write(&fixture.path);
+    let (mut app, database) = app(&fixture.path);
+    let defaults = app.settings();
+
+    app.apply(Settings {
+        // a chart twice, a column the table doesn't have, an account the database doesn't have
+        charts: [Chart::Pnl, Chart::Pnl, Chart::Price],
+        sorts: [
+            Sort {
+                column: 99,
+                descending: true,
+            },
+            defaults.sorts[1],
+            defaults.sorts[2],
+        ],
+        account: Some(7),
+        range: Range::Month,
+        ..defaults.clone()
+    });
+    app.refresh(&database, true);
+    assert_eq!(app.charts, defaults.charts);
+    assert_eq!(app.sort(Panel::Managers), defaults.sorts[0]);
+    assert_eq!(app.view, None);
+    // the rest kept
+    assert_eq!(app.range, Range::Month);
 }

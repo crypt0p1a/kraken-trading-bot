@@ -1159,6 +1159,8 @@ dependencies = [
  "ratatui",
  "rusqlite",
  "rust_decimal",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -1,6 +1,7 @@
 //! The state of the dashboard: what's selected, what's shown, and the keys that change it
 
 use crate::data::{Action, Database, Manager, ManagerKey, Order, account_of, manager_number};
+use crate::settings::Settings;
 use crate::sort::{self, Sort};
 use crate::stats::Model;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -28,7 +29,8 @@ impl Panel {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Chart {
     /// The P&L over time
     Pnl,
@@ -80,7 +82,8 @@ impl Chart {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Range {
     Hour,
     Day,
@@ -328,6 +331,49 @@ impl App {
         self.drilled = false;
         self.orders_row = 0;
         self.tape_row = 0;
+    }
+
+    /// What the screen shows, to keep for the next run
+    pub fn settings(&self) -> Settings {
+        Settings {
+            charts: self.charts,
+            range: self.range,
+            account: self.view,
+            sorts: self.sorts,
+            all_charts: self.all_charts,
+            show_idle: self.show_idle,
+            open_only: self.open_only,
+        }
+    }
+
+    /// The settings of a previous run, once the database is read: what doesn't fit it anymore keeps
+    /// its default, an account gone, a column gone, a chart twice
+    pub fn apply(&mut self, settings: Settings) {
+        let [first, second, third] = settings.charts;
+        if first != second && first != third && second != third {
+            self.charts = settings.charts;
+        }
+        self.range = settings.range;
+        for (index, panel) in [Panel::Managers, Panel::Orders, Panel::Tape]
+            .into_iter()
+            .enumerate()
+        {
+            let sort = settings.sorts[index];
+            if sort.column < sort::columns(panel).len() {
+                self.sorts[index] = sort;
+            }
+        }
+        self.all_charts = settings.all_charts;
+        self.show_idle = settings.show_idle;
+        self.open_only = settings.open_only;
+        let names = &self.model.data.names;
+        let account = settings
+            .account
+            .filter(|id| names.len() > 1 && names.iter().any(|(it, _)| it == id));
+        if account != self.view {
+            self.view = account;
+            self.view_changed = true;
+        }
     }
 
     /// What this table follows
