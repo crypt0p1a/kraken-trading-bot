@@ -33,6 +33,10 @@ The dashboard on its demo database, 7 days of a simulated market traded by the s
 |---|---|
 | ![Every chart: portfolio, P&L, price, by crypto, growth, sells, if the market moves, heatmaps](assets/screenshots/charts.svg) | ![A manager focused on: its figures, its chart, its orders](assets/screenshots/focus.svg) |
 
+| The markets, a pair at a time (`d` twice) | |
+|---|---|
+| ![The markets: the first pair of the YAML file, its price, candles, returns, levels, volume, spread, volatility, drawdown](assets/screenshots/markets.svg) | |
+
 They're drawn, not taken: `scripts/screenshots.sh` renders the screens of the dashboard as SVG
 images in `assets/screenshots`, from the demo database. Run it before a release, and whenever a
 screen changes.
