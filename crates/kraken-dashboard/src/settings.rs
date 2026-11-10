@@ -20,6 +20,9 @@ pub struct Settings {
     /// The order of the managers, the orders and the tape
     pub sorts: [Sort; 3],
     pub all_charts: bool,
+    /// The page of the markets, and the pair it shows
+    pub markets: bool,
+    pub pair: Option<String>,
     pub show_idle: bool,
     pub open_only: bool,
 }
@@ -93,6 +96,7 @@ mod tests {
             range: Range::Week,
             account: Some(2),
             all_charts: true,
+            pair: Some("ETHUSD".into()),
             show_idle: true,
             open_only: true,
             ..Settings::default()

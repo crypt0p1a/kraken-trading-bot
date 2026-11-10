@@ -12,9 +12,11 @@
 //!  q QUIT  tab PANEL  ↑↓ MOVE  ⏎ FOCUS  c CHART  1-5 RANGE …
 //! ```
 //!
-//! `d` replaces the key figures and the tables with every chart
+//! `d` replaces the key figures and the tables with every chart, then with the page of the markets,
+//! one pair at a time, then brings the desk back
 
 mod charts;
+mod markets;
 mod panels;
 
 use crate::app::{App, Range, now_millis};
@@ -68,8 +70,12 @@ pub fn render(frame: &mut Frame, app: &App) {
     render_header(frame, app, header);
     render_ticker_tape(frame, app, tape);
 
-    if app.all_charts {
-        charts::render_all(frame, app, tiles.union(body));
+    if app.all_charts || app.markets {
+        if app.markets {
+            markets::render(frame, app, tiles.union(body));
+        } else {
+            charts::render_all(frame, app, tiles.union(body));
+        }
         render_footer(frame, app, footer);
         if app.help {
             render_help(frame, area);
@@ -508,10 +514,20 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
-    let keys: Vec<[Span; 2]> = if app.all_charts {
+    let keys: Vec<[Span; 2]> = if app.markets {
         vec![
             key("q", "QUIT"),
             key("d", "DESK"),
+            key("←→", "PAIR"),
+            key("r", "RELOAD"),
+            key("t", "TICK"),
+            key("?", "HELP"),
+            key("1-5", "RANGE"),
+        ]
+    } else if app.all_charts {
+        vec![
+            key("q", "QUIT"),
+            key("d", "MARKETS"),
             key("↑↓", "MANAGER"),
             key("⏎", if app.drilled { "ALL" } else { "FOCUS" }),
             key("r", "RELOAD"),
@@ -577,7 +593,10 @@ fn render_help(frame: &mut Frame, area: Rect) {
             "c v b",
             "the chart at the top, in the middle, at the bottom: P&L, portfolio, price, sells, if the market moves, growth, by crypto, heatmaps of the pairs and of the accounts",
         ),
-        ("d", "every chart on the screen, d or esc back to the desk"),
+        (
+            "d",
+            "the next screen: every chart, then the markets a pair at a time in the order of the YAML file (← → the pair), then the desk; esc back to the desk",
+        ),
         ("1 … 5", "range of the charts: 1H 24H 7D 30D ALL"),
         (
             "a",

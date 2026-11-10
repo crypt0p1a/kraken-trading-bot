@@ -181,13 +181,28 @@ cargo run --release -p kraken-dashboard -- kraken-bot.sqlite   # on a copy of th
 | markets | the last price (the range and the spread left out when narrow), 24 hours change, ATR, range and trend of the [indicators](#indicators-of-the-market), the spread |
 | tape | the decisions: orders placed, refused (✗), trailing, virtual managers; `i` shows the idle ones |
 
+The page of the markets, after every chart with `d`, shows one pair at a time, in the order of the YAML file (where its
+first manager is; a pair traded only by virtual managers, then a pair without a manager, last),
+`←` `→` to the next one:
+
+| Panel | Content |
+|-------|---------|
+| pairs | every pair, its price, its change over the range and its sparkline; the one shown framed |
+| price | the price with the EMAs of the [indicators](#indicators-of-the-market), the VWAP of 24 hours and the buys and the sells filled |
+| quote | last, bid, ask, spread, change, highest and lowest of the range, VWAP, volume, trend, ATR, the managers of the pair and what they hold |
+| position | where the price is between the lowest and the highest of the range, what the managers hold of their budget |
+| candles | open, highest, lowest and close of each period, as many as the width holds |
+| returns | how many times the price moved by how much from a period to the next |
+| levels | the open orders of the managers and what their positions cost, around the last price |
+| volume 24h, spread, volatility, drawdown | over the range: the volume, the spread in bps, the ATR, how far the price is under the highest before it |
+
 What the screen shows is kept from a run to the next: the charts, the range, the account, the
-order of the tables, the screen of every chart, the idle decisions and the open orders only. They're
+order of the tables, the screen of every chart, the page of the markets and its pair, the idle decisions and the open orders only. They're
 in `kraken-bot.sqlite.dashboard.json`, next to the database (in the volume `/data` with Docker):
 removing it brings the defaults back. A setting that doesn't fit the database anymore, an account
 gone, keeps its default.
 
-Keys: `d` every chart on the screen (`d` or `esc` back), `tab` the panel the arrows move in, `←` `→` the column its table is sorted on, `s` the other
+Keys: `d` the next screen, in a circle: every chart, the page of the markets (`←` `→` the pair), the desk again (`esc` back to the desk), `tab` the panel the arrows move in, `←` `→` the column its table is sorted on, `s` the other
 way (the positions and the volumes by what they're worth, a `—` always at the end), `⏎` focus on the manager of the cursor (tiles, charts,
 orders and tape on it alone), `esc` back to all of them, `1`…`5` the range of the charts (1H, 24H,
 7D, 30D, ALL), `o` the open orders only, `r` read the database again, `t` a tick of the bot now,

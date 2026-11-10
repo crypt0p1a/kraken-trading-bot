@@ -543,6 +543,13 @@ fn draws_an_empty_database() {
     let text = screen(&app, 140, 40);
     assert!(text.contains("NO MANAGER YET"), "{text}");
     assert!(text.contains("NO ORDER YET"), "{text}");
+    let mut app = app;
+    app.on_key(key('d'));
+    app.on_key(key('d'));
+    assert!(screen(&app, 140, 40).contains("NO TICKER YET"));
+    // nothing to go through
+    app.on_key(KeyEvent::from(KeyCode::Right));
+    assert_eq!(app.pair, None);
 }
 
 #[test]
@@ -1029,9 +1036,13 @@ fn goes_from_the_desk_to_every_chart_and_back() {
     app.on_key(KeyEvent::from(KeyCode::Esc));
     assert!(!app.all_charts);
     assert!(screen(&app, 200, 50).contains("MANAGERS"));
+    // d goes through the screens in a circle: every chart, the markets, the desk
     app.on_key(KeyEvent::from(KeyCode::Char('d')));
     app.on_key(KeyEvent::from(KeyCode::Char('d')));
-    assert!(!app.all_charts);
+    assert!(!app.all_charts && app.markets);
+    assert!(screen(&app, 200, 50).contains("XBTUSD · PRICE"));
+    app.on_key(KeyEvent::from(KeyCode::Char('d')));
+    assert!(!app.all_charts && !app.markets);
     app.on_key(KeyEvent::from(KeyCode::Char('d')));
     app.on_key(KeyEvent::new(
         KeyCode::Char('c'),
@@ -1458,4 +1469,147 @@ fn starts_from_the_defaults_for_what_doesnt_fit_the_database_anymore() {
     assert_eq!(app.view, None);
     // the rest kept
     assert_eq!(app.range, Range::Month);
+}
+
+/// The pairs one by one, in the order of the YAML file: of their first manager, not of their names
+#[test]
+fn goes_through_the_markets_in_the_order_of_the_yaml_file() {
+    let fixture = path("markets");
+    let storage = write(&fixture.path);
+    let now = now_millis();
+    // ADAUSD after XBTUSD (#1), before ETHUSD (#5); DOTUSD, without a manager, last
+    for (pair, price, manager) in [
+        ("XETHZUSD", "2200", Some((5, "ETHUSD"))),
+        ("ADAUSD", "0.71", Some((4, "ADA/USD"))),
+        ("DOTUSD", "4.2", None),
+    ] {
+        for (at, moved) in [
+            (now - 7_200_000, "0.98"),
+            (now - 3_600_000, "1.03"),
+            (now, "1"),
+        ] {
+            let price = d(price) * d(moved);
+            storage
+                .record_ticker(&TickerRecord {
+                    pair: pair.into(),
+                    at,
+                    last: price,
+                    bid: price * d("0.999"),
+                    ask: price * d("1.001"),
+                    volume_24h: d("5000"),
+                    vwap_24h: price,
+                })
+                .unwrap();
+        }
+        if let Some((id, configured)) = manager {
+            let config = config(id, configured);
+            storage
+                .save_manager(&ManagerState {
+                    balances: ledger::compute(config.budget, &[]),
+                    config,
+                    last_price: d(price),
+                    at: now,
+                })
+                .unwrap();
+        }
+    }
+    let (mut app, database) = app(&fixture.path);
+    let charts = app.charts;
+    let names: Vec<String> = app
+        .model
+        .pairs()
+        .into_iter()
+        .map(|it| kraken_dashboard::stats::canonical(&app.model.data.markets[it].key))
+        .collect();
+    assert_eq!(names, ["XBTUSD", "ADAUSD", "ETHUSD", "DOTUSD"]);
+
+    app.on_key(key('d'));
+    app.on_key(key('d'));
+    assert!(app.markets && !app.all_charts);
+    let text = screen(&app, 200, 50);
+    for shown in [
+        "1 XBTUSD",
+        "2 ADAUSD",
+        "3 ETHUSD",
+        "4 DOTUSD",
+        "XBTUSD · PRICE",
+        "QUOTE",
+        "POSITION",
+        "IN RANGE",
+        "EXPOSURE",
+        "CANDLES",
+        "RETURNS",
+        "LEVELS",
+        "LAST 76,100.0",
+        "VOLUME 24H",
+        "SPREAD",
+        "VOLATILITY",
+        "NO INDICATORS YET",
+        "DRAWDOWN",
+        "PAIR",
+    ] {
+        assert!(text.contains(shown), "{shown}: {text}");
+    }
+    assert!(!text.contains("TAPE"), "{text}");
+    // the open buy of manager 1, in the levels
+    assert!(text.contains("BUY"), "{text}");
+
+    // the next pair, the one before, in a circle; the ends
+    let shown = |app: &App| screen(app, 200, 50);
+    app.on_key(KeyEvent::from(KeyCode::Right));
+    assert!(shown(&app).contains("ADAUSD · PRICE"));
+    assert_eq!(app.pair.as_deref(), Some("ADAUSD"));
+    app.on_key(KeyEvent::from(KeyCode::Down));
+    app.on_key(KeyEvent::from(KeyCode::Right));
+    assert!(shown(&app).contains("DOTUSD · PRICE"));
+    assert!(shown(&app).contains("NO ORDER, NO POSITION"));
+    app.on_key(KeyEvent::from(KeyCode::Right));
+    assert_eq!(app.pair.as_deref(), Some("XBTUSD"));
+    app.on_key(KeyEvent::from(KeyCode::Left));
+    assert_eq!(app.pair.as_deref(), Some("DOTUSD"));
+    app.on_key(KeyEvent::from(KeyCode::Home));
+    assert!(shown(&app).contains("XBTUSD · PRICE"));
+    app.on_key(KeyEvent::from(KeyCode::End));
+    assert_eq!(app.pair.as_deref(), Some("DOTUSD"));
+    app.on_key(KeyEvent::from(KeyCode::Up));
+    assert_eq!(app.pair.as_deref(), Some("ETHUSD"));
+
+    // the keys of the desk do nothing here
+    for code in [
+        KeyCode::Tab,
+        KeyCode::Enter,
+        KeyCode::Char('c'),
+        KeyCode::Char('o'),
+        KeyCode::Char('i'),
+    ] {
+        app.on_key(KeyEvent::from(code));
+    }
+    assert_eq!(app.panel, Panel::Managers);
+    assert_eq!(app.charts, charts);
+    assert!(!app.drilled && !app.open_only && !app.show_idle);
+
+    // every range and every size, without panicking
+    for digit in ['1', '2', '3', '4', '5'] {
+        press(&mut app, &database, digit);
+        assert!(shown(&app).contains("ETHUSD · PRICE"));
+    }
+    for (width, height) in [(100, 28), (120, 30), (160, 40), (300, 80)] {
+        assert!(screen(&app, width, height).contains("ETHUSD"));
+    }
+
+    // d to the desk, then back through every chart; esc to the desk; the pair kept
+    app.on_key(key('d'));
+    assert!(!app.markets && !app.all_charts);
+    assert!(shown(&app).contains("MANAGERS"));
+    app.on_key(key('d'));
+    assert!(app.all_charts && !app.markets);
+    app.on_key(key('d'));
+    assert!(app.markets && !app.all_charts);
+    assert!(shown(&app).contains("ETHUSD · PRICE"));
+    app.on_key(KeyEvent::from(KeyCode::Esc));
+    assert!(!app.markets);
+    assert_eq!(app.settings().pair.as_deref(), Some("ETHUSD"));
+    // m is nothing anymore
+    app.on_key(key('m'));
+    assert!(!app.markets && !app.all_charts);
 }
