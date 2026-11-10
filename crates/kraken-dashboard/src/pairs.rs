@@ -43,7 +43,8 @@ impl Histogram {
 impl Model {
     /// The markets in the order of the YAML file: a pair comes where its first manager is, the
     /// smallest id of the managers of the file. The virtual managers count only for a pair no
-    /// manager of the file trades, the pairs without a manager come last
+    /// manager of the file trades. A pair without a manager, ticks left from an older file, is
+    /// left out, unless no pair has a manager: then every pair, by its name
     pub fn pairs(&self) -> Vec<usize> {
         let first = |index: usize, virtuals: bool| {
             self.data
@@ -63,7 +64,12 @@ impl Model {
             };
             (rank, canonical(&self.data.markets[*index].key))
         });
-        order
+        let traded: Vec<usize> = order
+            .iter()
+            .copied()
+            .filter(|index| !self.managers_of_market(*index).is_empty())
+            .collect();
+        if traded.is_empty() { order } else { traded }
     }
 
     /// The managers trading the market of this index

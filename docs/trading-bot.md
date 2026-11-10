@@ -182,7 +182,8 @@ cargo run --release -p kraken-dashboard -- kraken-bot.sqlite   # on a copy of th
 | tape | the decisions: orders placed, refused (✗), trailing, virtual managers; `i` shows the idle ones |
 
 The page of the markets, after every chart with `d`, shows one pair at a time, in the order of the YAML file (where its
-first manager is; a pair traded only by virtual managers, then a pair without a manager, last),
+first manager is; a pair traded only by virtual managers last; a pair no manager trades anymore, ticks
+left from an older file, left out),
 `←` `→` to the next one:
 
 | Panel | Content |

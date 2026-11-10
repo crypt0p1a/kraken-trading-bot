@@ -1477,7 +1477,7 @@ fn goes_through_the_markets_in_the_order_of_the_yaml_file() {
     let fixture = path("markets");
     let storage = write(&fixture.path);
     let now = now_millis();
-    // ADAUSD after XBTUSD (#1), before ETHUSD (#5); DOTUSD, without a manager, last
+    // ADAUSD after XBTUSD (#1), before ETHUSD (#5); DOTUSD, ticks without a manager, left out
     for (pair, price, manager) in [
         ("XETHZUSD", "2200", Some((5, "ETHUSD"))),
         ("ADAUSD", "0.71", Some((4, "ADA/USD"))),
@@ -1521,7 +1521,7 @@ fn goes_through_the_markets_in_the_order_of_the_yaml_file() {
         .into_iter()
         .map(|it| kraken_dashboard::stats::canonical(&app.model.data.markets[it].key))
         .collect();
-    assert_eq!(names, ["XBTUSD", "ADAUSD", "ETHUSD", "DOTUSD"]);
+    assert_eq!(names, ["XBTUSD", "ADAUSD", "ETHUSD"]);
 
     app.on_key(key('d'));
     app.on_key(key('d'));
@@ -1531,7 +1531,6 @@ fn goes_through_the_markets_in_the_order_of_the_yaml_file() {
         "1 XBTUSD",
         "2 ADAUSD",
         "3 ETHUSD",
-        "4 DOTUSD",
         "XBTUSD · PRICE",
         "QUOTE",
         "POSITION",
@@ -1550,7 +1549,10 @@ fn goes_through_the_markets_in_the_order_of_the_yaml_file() {
     ] {
         assert!(text.contains(shown), "{shown}: {text}");
     }
-    assert!(!text.contains("TAPE"), "{text}");
+    assert!(
+        !text.contains("TAPE") && !text.contains("4 DOTUSD"),
+        "{text}"
+    );
     // the open buy of manager 1, in the levels
     assert!(text.contains("BUY"), "{text}");
 
@@ -1558,20 +1560,21 @@ fn goes_through_the_markets_in_the_order_of_the_yaml_file() {
     let shown = |app: &App| screen(app, 200, 50);
     app.on_key(KeyEvent::from(KeyCode::Right));
     assert!(shown(&app).contains("ADAUSD · PRICE"));
+    assert!(shown(&app).contains("NO ORDER, NO POSITION"));
     assert_eq!(app.pair.as_deref(), Some("ADAUSD"));
     app.on_key(KeyEvent::from(KeyCode::Down));
-    app.on_key(KeyEvent::from(KeyCode::Right));
-    assert!(shown(&app).contains("DOTUSD · PRICE"));
-    assert!(shown(&app).contains("NO ORDER, NO POSITION"));
+    assert!(shown(&app).contains("ETHUSD · PRICE"));
     app.on_key(KeyEvent::from(KeyCode::Right));
     assert_eq!(app.pair.as_deref(), Some("XBTUSD"));
     app.on_key(KeyEvent::from(KeyCode::Left));
-    assert_eq!(app.pair.as_deref(), Some("DOTUSD"));
+    assert_eq!(app.pair.as_deref(), Some("ETHUSD"));
     app.on_key(KeyEvent::from(KeyCode::Home));
     assert!(shown(&app).contains("XBTUSD · PRICE"));
     app.on_key(KeyEvent::from(KeyCode::End));
-    assert_eq!(app.pair.as_deref(), Some("DOTUSD"));
+    assert_eq!(app.pair.as_deref(), Some("ETHUSD"));
     app.on_key(KeyEvent::from(KeyCode::Up));
+    assert_eq!(app.pair.as_deref(), Some("ADAUSD"));
+    app.on_key(KeyEvent::from(KeyCode::Down));
     assert_eq!(app.pair.as_deref(), Some("ETHUSD"));
 
     // the keys of the desk do nothing here
