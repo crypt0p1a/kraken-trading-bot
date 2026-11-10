@@ -1,8 +1,9 @@
 //! The state of the dashboard: what's selected, what's shown, and the keys that change it
 
 use crate::data::{Action, Database, Manager, ManagerKey, Order, account_of, manager_number};
+use crate::settings::Settings;
 use crate::sort::{self, Sort};
-use crate::stats::Model;
+use crate::stats::{Model, canonical};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::collections::HashMap;
 use std::time::Instant;
@@ -28,7 +29,8 @@ impl Panel {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Chart {
     /// The P&L over time
     Pnl,
@@ -80,7 +82,8 @@ impl Chart {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Range {
     Hour,
     Day,
@@ -156,6 +159,11 @@ pub struct App {
     pub charts: [Chart; 3],
     /// Every chart on the screen, instead of the desk
     pub all_charts: bool,
+    /// The page of the markets, one pair at a time, instead of the desk: after every chart
+    pub markets: bool,
+    /// The pair of the page of the markets, as [`canonical`] names it: the first one when None or
+    /// gone
+    pub pair: Option<String>,
     pub range: Range,
     /// The account shown, all of them added up when None
     pub view: Option<i64>,
@@ -189,6 +197,8 @@ impl App {
             panel: Panel::Managers,
             charts: [Chart::Portfolio, Chart::Scenarios, Chart::Price],
             all_charts: false,
+            markets: false,
+            pair: None,
             range: Range::Day,
             view: None,
             orders_row: 0,
@@ -330,6 +340,53 @@ impl App {
         self.tape_row = 0;
     }
 
+    /// What the screen shows, to keep for the next run
+    pub fn settings(&self) -> Settings {
+        Settings {
+            charts: self.charts,
+            range: self.range,
+            account: self.view,
+            sorts: self.sorts,
+            all_charts: self.all_charts,
+            markets: self.markets,
+            pair: self.pair.clone(),
+            show_idle: self.show_idle,
+            open_only: self.open_only,
+        }
+    }
+
+    /// The settings of a previous run, once the database is read: what doesn't fit it anymore keeps
+    /// its default, an account gone, a column gone, a chart twice
+    pub fn apply(&mut self, settings: Settings) {
+        let [first, second, third] = settings.charts;
+        if first != second && first != third && second != third {
+            self.charts = settings.charts;
+        }
+        self.range = settings.range;
+        for (index, panel) in [Panel::Managers, Panel::Orders, Panel::Tape]
+            .into_iter()
+            .enumerate()
+        {
+            let sort = settings.sorts[index];
+            if sort.column < sort::columns(panel).len() {
+                self.sorts[index] = sort;
+            }
+        }
+        self.all_charts = settings.all_charts;
+        self.markets = settings.markets && !settings.all_charts;
+        self.pair = settings.pair;
+        self.show_idle = settings.show_idle;
+        self.open_only = settings.open_only;
+        let names = &self.model.data.names;
+        let account = settings
+            .account
+            .filter(|id| names.len() > 1 && names.iter().any(|(it, _)| it == id));
+        if account != self.view {
+            self.view = account;
+            self.view_changed = true;
+        }
+    }
+
     /// What this table follows
     pub fn sort(&self, panel: Panel) -> Sort {
         self.sorts[panel as usize]
@@ -428,11 +485,66 @@ impl App {
         }
     }
 
+    /// The pair of the page of the markets: (its place among the pairs, its index in the markets)
+    pub fn shown_pair(&self) -> Option<(usize, usize)> {
+        let pairs = self.model.pairs();
+        let place = self
+            .pair
+            .as_ref()
+            .and_then(|pair| {
+                pairs
+                    .iter()
+                    .position(|it| canonical(&self.model.data.markets[*it].key) == *pair)
+            })
+            .unwrap_or(0);
+        pairs.get(place).map(|it| (place, *it))
+    }
+
+    /// The pair `by` places after the one shown, in the order of the YAML file, in a circle
+    fn move_pair(&mut self, by: i64) {
+        let pairs = self.model.pairs();
+        if pairs.is_empty() {
+            return;
+        }
+        let place = self.shown_pair().map_or(0, |it| it.0) as i64;
+        let count = pairs.len() as i64;
+        let next = (place + by).rem_euclid(count) as usize;
+        self.pair = Some(canonical(&self.model.data.markets[pairs[next]].key));
+    }
+
     /// Handles a key; returns true when the database must be read again
     pub fn on_key(&mut self, key: KeyEvent) -> bool {
         if self.help {
             self.help = false;
             return false;
+        }
+        // the page of the markets: the arrows go through the pairs, the keys of the tables do nothing
+        if self.markets && !key.modifiers.contains(KeyModifiers::CONTROL) {
+            match key.code {
+                KeyCode::Right | KeyCode::Down | KeyCode::Char('j' | 'l' | 'n') => {
+                    self.move_pair(1);
+                    return false;
+                }
+                KeyCode::Left | KeyCode::Up | KeyCode::Char('k' | 'p') => {
+                    self.move_pair(-1);
+                    return false;
+                }
+                KeyCode::Home | KeyCode::Char('g') => {
+                    self.pair = None;
+                    return false;
+                }
+                KeyCode::End | KeyCode::Char('G') => {
+                    self.move_pair(-1 - self.shown_pair().map_or(0, |it| it.0) as i64);
+                    return false;
+                }
+                KeyCode::Tab
+                | KeyCode::BackTab
+                | KeyCode::Enter
+                | KeyCode::PageUp
+                | KeyCode::PageDown
+                | KeyCode::Char('s' | 'c' | 'v' | 'b' | 'o' | 'i') => return false,
+                _ => {}
+            }
         }
         // what's about the tables and the column of charts: none of them on this screen
         if self.all_charts
@@ -451,8 +563,16 @@ impl App {
         let mut reload = false;
         match key.code {
             KeyCode::Char('q') => self.quit = true,
-            KeyCode::Char('d') => self.all_charts = !self.all_charts,
+            // the screens in a circle: the desk, every chart, the markets
+            KeyCode::Char('d') => {
+                (self.all_charts, self.markets) = match (self.all_charts, self.markets) {
+                    (false, false) => (true, false),
+                    (true, _) => (false, true),
+                    (false, true) => (false, false),
+                };
+            }
             KeyCode::Esc if self.all_charts => self.all_charts = false,
+            KeyCode::Esc if self.markets => self.markets = false,
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => self.quit = true,
             KeyCode::Char('?') | KeyCode::Char('h') => self.help = true,
             KeyCode::Tab => self.panel = self.panel.next(),

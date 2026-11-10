@@ -208,6 +208,49 @@ pub struct Market {
     pub indicators: Option<Indicators>,
     /// The prices of the range, oldest first: (UTC milliseconds, last)
     pub prices: Vec<(i64, f64)>,
+    /// The ticks of the range bucketed, oldest first: the closes are the prices
+    pub candles: Vec<Candle>,
+    /// The indicators of the range, oldest first: empty for the databases older than them
+    pub trend: Vec<TrendPoint>,
+}
+
+/// The ticks of a bucket of the range: the first price, the extremes, the last one, with the book
+/// and the volume of the last tick
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Candle {
+    /// UTC milliseconds of the last tick
+    pub at: i64,
+    pub open: f64,
+    pub high: f64,
+    pub low: f64,
+    pub close: f64,
+    pub bid: f64,
+    pub ask: f64,
+    /// What was traded over the 24 hours before, in the base
+    pub volume_24h: f64,
+    pub vwap_24h: f64,
+}
+
+impl Candle {
+    /// The gap between the ask and the bid, in basis points of the middle
+    pub fn spread_bps(&self) -> f64 {
+        let middle = (self.bid + self.ask) / 2.0;
+        if middle > 0.0 {
+            (self.ask - self.bid) / middle * 10_000.0
+        } else {
+            0.0
+        }
+    }
+}
+
+/// The indicators of a pair at a tick
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TrendPoint {
+    /// UTC milliseconds
+    pub at: i64,
+    pub ema_fast: f64,
+    pub ema_slow: f64,
+    pub atr_percent: f64,
 }
 
 /// What the whole account is worth in a quote currency, managers or not
@@ -754,27 +797,55 @@ impl Database {
                     vwap_24h: decimal(row, 6)?,
                     indicators: None,
                     prices: Vec::new(),
+                    candles: Vec::new(),
+                    trend: Vec::new(),
                 })
             })?;
             rows.collect::<rusqlite::Result<Vec<_>>>()?
         };
 
-        let mut prices = self.connection.prepare_cached(
-            "SELECT MAX(at), CAST(last AS REAL) FROM tickers WHERE pair = ?1 AND at >= ?2
-             GROUP BY at / ?3 ORDER BY 1",
+        // the first and the last tick of each bucket found again by their key, (pair, at)
+        let mut candles = self.connection.prepare_cached(
+            "WITH buckets AS (
+                SELECT MIN(at) AS first, MAX(at) AS last, MIN(CAST(last AS REAL)) AS low,
+                    MAX(CAST(last AS REAL)) AS high
+                FROM tickers WHERE pair = ?1 AND at >= ?2 GROUP BY at / ?3
+             )
+             SELECT b.last, CAST(o.last AS REAL), b.high, b.low, CAST(c.last AS REAL),
+                CAST(c.bid AS REAL), CAST(c.ask AS REAL), CAST(c.volume_24h AS REAL),
+                CAST(c.vwap_24h AS REAL)
+             FROM buckets b
+             JOIN tickers o ON o.pair = ?1 AND o.at = b.first
+             JOIN tickers c ON c.pair = ?1 AND c.at = b.last
+             ORDER BY 1",
         )?;
         for market in &mut markets {
-            market.prices = prices
+            market.candles = candles
                 .query_map(params![market.key, since, bucket], |row| {
-                    Ok((row.get(0)?, row.get(1)?))
+                    Ok(Candle {
+                        at: row.get(0)?,
+                        open: row.get(1)?,
+                        high: row.get(2)?,
+                        low: row.get(3)?,
+                        close: row.get(4)?,
+                        bid: row.get(5)?,
+                        ask: row.get(6)?,
+                        volume_24h: row.get(7)?,
+                        vwap_24h: row.get(8)?,
+                    })
                 })?
                 .collect::<rusqlite::Result<_>>()?;
+            market.prices = market.candles.iter().map(|it| (it.at, it.close)).collect();
         }
 
         if self.tables.contains("indicators") {
             let mut statement = self.connection.prepare_cached(
                 "SELECT atr_percent, ema_fast, ema_slow, slope_24h_percent, range_24h_percent,
                     change_24h_percent FROM indicators WHERE pair = ?1 ORDER BY at DESC LIMIT 1",
+            )?;
+            let mut trend = self.connection.prepare_cached(
+                "SELECT MAX(at), ema_fast, ema_slow, atr_percent FROM indicators
+                 WHERE pair = ?1 AND at >= ?2 GROUP BY at / ?3 ORDER BY 1",
             )?;
             for market in &mut markets {
                 let mut rows = statement.query([&market.key])?;
@@ -788,6 +859,16 @@ impl Database {
                         change_24h_percent: row.get(5)?,
                     });
                 }
+                market.trend = trend
+                    .query_map(params![market.key, since, bucket], |row| {
+                        Ok(TrendPoint {
+                            at: row.get(0)?,
+                            ema_fast: row.get(1)?,
+                            ema_slow: row.get(2)?,
+                            atr_percent: row.get(3)?,
+                        })
+                    })?
+                    .collect::<rusqlite::Result<_>>()?;
             }
         }
         Ok(markets)

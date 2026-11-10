@@ -23,7 +23,7 @@ fn block(app: &App, name: String) -> Block<'static> {
 }
 
 /// The chart, its range, what it sums up
-fn block_with(app: &App, name: String, summary: Vec<Span<'static>>) -> Block<'static> {
+pub(super) fn block_with(app: &App, name: String, summary: Vec<Span<'static>>) -> Block<'static> {
     let mut details = vec![Span::styled(
         format!("· {} ", app.range.label()),
         theme::dim(),
@@ -32,7 +32,7 @@ fn block_with(app: &App, name: String, summary: Vec<Span<'static>>) -> Block<'st
     panel(title(&name, details), false)
 }
 
-fn empty(frame: &mut Frame, area: Rect, block: Block, text: &str) {
+pub(super) fn empty(frame: &mut Frame, area: Rect, block: Block, text: &str) {
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(text.to_string(), theme::faint())))
             .centered()
@@ -42,7 +42,7 @@ fn empty(frame: &mut Frame, area: Rect, block: Block, text: &str) {
 }
 
 /// The bounds of the values, a little wider than them
-fn bounds(values: impl Iterator<Item = f64>) -> [f64; 2] {
+pub(super) fn bounds(values: impl Iterator<Item = f64>) -> [f64; 2] {
     let (low, high) = values.fold((f64::MAX, f64::MIN), |(low, high), it| {
         (low.min(it), high.max(it))
     });
@@ -53,7 +53,7 @@ fn bounds(values: impl Iterator<Item = f64>) -> [f64; 2] {
     [low - margin, high + margin]
 }
 
-fn time_axis(since: i64, now: i64) -> Axis<'static> {
+pub(super) fn time_axis(since: i64, now: i64) -> Axis<'static> {
     let short = now - since < 24 * 3_600_000;
     let label = |at: i64| {
         Span::styled(
@@ -71,7 +71,7 @@ fn time_axis(since: i64, now: i64) -> Axis<'static> {
         .labels(vec![label(since), label((since + now) / 2), label(now)])
 }
 
-fn value_axis(bounds: [f64; 2], show: fn(f64) -> String) -> Axis<'static> {
+pub(super) fn value_axis(bounds: [f64; 2], show: fn(f64) -> String) -> Axis<'static> {
     let middle = (bounds[0] + bounds[1]) / 2.0;
     Axis::default()
         .style(Style::new().fg(FAINT))
