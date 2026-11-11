@@ -28,6 +28,8 @@ const BUY_TIMEOUT: i64 = 12 * 3_600_000;
 const TRAILING: f64 = 1.5;
 /// The virtual manager copying #2, added after a day
 const VIRTUAL: i32 = 1_001_002;
+/// The virtual manager copying #1 with the XBT of the account no manager held, added after 5 days
+const HOLDER: i32 = 1_002_001;
 
 struct Pair {
     key: &'static str,
@@ -72,10 +74,36 @@ fn manager(id: i32, pair: &str, budget: &str, buy_below: &str, sell_above: &str)
             buy_below: buy_below.parse().unwrap(),
             sell_above: sell_above.parse().unwrap(),
             mode: ManagerMode::Active,
+            holding: None,
         },
         orders: Vec::new(),
         reference: 0.0,
     }
+}
+
+/// Saves a virtual manager, a copy of `template`, added at `at`
+fn add_copy(storage: &Storage, copy: &Manager, template: i32, at: i64, reason: &str) {
+    storage
+        .add_virtual_manager(&VirtualManager {
+            config: copy.config.clone(),
+            template_id: template,
+            created_at: at,
+            reason: reason.into(),
+        })
+        .unwrap();
+    storage
+        .record_action(&ActionRecord {
+            manager_id: copy.config.id,
+            at,
+            kind: "virtual_created".into(),
+            amount: Some(copy.config.budget),
+            price: None,
+            reason: Some(reason.into()),
+            dry_run: false,
+            txid: None,
+            error: None,
+        })
+        .unwrap();
 }
 
 fn ema(values: &[f64], period: usize) -> f64 {
@@ -208,29 +236,21 @@ fn main() {
         }
 
         if tick == TICKS / 2 {
-            let mut copy = manager(VIRTUAL, "XBTUSD", "30", "1.0", "1.5");
-            copy.config.id = VIRTUAL;
-            storage
-                .add_virtual_manager(&VirtualManager {
-                    config: copy.config.clone(),
-                    template_id: 2,
-                    created_at: at,
-                    reason: "30 USD unused in the account".into(),
-                })
-                .unwrap();
-            storage
-                .record_action(&ActionRecord {
-                    manager_id: VIRTUAL,
-                    at,
-                    kind: "virtual_created".into(),
-                    amount: Some(copy.config.budget),
-                    price: None,
-                    reason: Some("copy of #2: 30 USD unused in the account".into()),
-                    dry_run: false,
-                    txid: None,
-                    error: None,
-                })
-                .unwrap();
+            let copy = manager(VIRTUAL, "XBTUSD", "30", "1.0", "1.5");
+            let reason = "copy of #2: 30 USD unused in the account";
+            add_copy(&storage, &copy, 2, at, reason);
+            managers.push(copy);
+        }
+        // the XBT of the account no manager held, as bought by the buy of #1: at -0.5%
+        if tick == TICKS * 5 / 7 {
+            let mut copy = manager(HOLDER, "XBTUSD", "30", "0.5", "0.8");
+            let bought = pairs[0].price * (1.0 - 0.005);
+            copy.config.holding = Some(decimal(30.0 / (bought * (1.0 + FEE)), 8));
+            let reason = format!(
+                "copy of #1: sells {} of the 0.002 XXBT held by no manager, as bought at {bought:.1}",
+                copy.config.holding.unwrap()
+            );
+            add_copy(&storage, &copy, 1, at, &reason);
             managers.push(copy);
         }
 
@@ -316,7 +336,7 @@ fn main() {
                 storage.upsert_orders(&changed).unwrap();
             }
 
-            let balances = ledger::compute(manager.config.budget, &manager.orders);
+            let balances = ledger::of(&manager.config, &manager.orders);
             storage
                 .save_manager(&ManagerState {
                     config: manager.config.clone(),
@@ -418,7 +438,7 @@ fn main() {
                 .iter()
                 .find(|it| it.altname == manager.config.pair.replace('/', ""))
                 .unwrap();
-            let balances = ledger::compute(manager.config.budget, &manager.orders);
+            let balances = ledger::of(&manager.config, &manager.orders);
             let account = accounts
                 .entry(kraken_dashboard::stats::split(pair.altname).1)
                 .or_insert((Decimal::from(20), Decimal::ZERO));
