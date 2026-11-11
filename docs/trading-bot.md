@@ -126,6 +126,35 @@ virtual_managers: true
   for what its buy cost + 1.5%, fees included.
 - They are stored in the `virtual_managers` table of the database, deleted ones included.
 
+### The crypto no manager holds
+
+With `sell_free_base: true` too (`false` by default: the crypto of the account is left alone), the
+crypto of the account no manager holds, a deposit of XBT for instance, is sold by virtual managers:
+
+```yaml
+virtual_managers: true
+sell_free_base: true
+```
+
+- **The free crypto**, per base asset: what the account has available, minus what each manager
+  holds and hasn't put on sale yet. The crypto of the open sell orders isn't available.
+- **At each tick**, the first active manager of the YAML file on a pair of that crypto, among the
+  ones with the fewest such copies (so each gets one in turn), gets a copy which starts **as if
+  its buy had just been filled**: the price of its buy, `buy_below`% under the price of the
+  market, and what its budget buys at that price, fees included. If the free crypto pays for it,
+  the copy holds that amount, which cost its budget. One at most per tick, as long as the free
+  crypto lasts.
+- **It sells it** like any manager: for its budget + `sell_above`%, fees deducted. So from the
+  price its buy would have had, not from the price of the market: about `sell_above - buy_below`%
+  above it, plus the fees. Then it buys again with what it brought, and trades like the others.
+  With `buy_below` above `sell_above`, the sell is under the price of the market: filled at once.
+- **Deleted** when its crypto leaves the account before it sold anything (withdrawn), 3 ticks in a
+  row, like a virtual manager which can't buy.
+- **Rebuilt** from its orders as the others: a first order which is a sell tells a copy which
+  started with crypto, the amount of that sell, its budget what the sell brings back less
+  `sell_above`%.
+- The amount it started with is the `holding` column of `virtual_managers`.
+
 ## Indicators of the market
 
 At each tick, the bot reads the candles of 15 minutes of the last 24 hours of each pair (public

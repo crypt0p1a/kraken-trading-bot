@@ -338,6 +338,8 @@ SELECT 1, key, state, updated_at FROM commands;
 DROP TABLE commands;
 ALTER TABLE commands_of_accounts RENAME TO commands;
 "#,
+    // the crypto a virtual manager started with instead of its budget: the free one of the account
+    "ALTER TABLE virtual_managers ADD COLUMN holding TEXT;",
 ];
 
 pub struct Storage {

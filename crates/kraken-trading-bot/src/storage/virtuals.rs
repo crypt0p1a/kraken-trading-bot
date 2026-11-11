@@ -34,8 +34,8 @@ impl Storage {
         let config = &manager.config;
         self.connection.execute(
             "INSERT INTO virtual_managers (account, id, template_id, pair, budget, buy_below,
-                sell_above, mode, created_at, reason)
-             VALUES (?10, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                sell_above, mode, created_at, reason, holding)
+             VALUES (?10, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?11)",
             params![
                 config.id,
                 manager.template_id,
@@ -47,6 +47,7 @@ impl Storage {
                 manager.created_at,
                 manager.reason,
                 self.account,
+                config.holding.map(|it| it.to_string()),
             ],
         )?;
         Ok(())
@@ -55,7 +56,8 @@ impl Storage {
     /// The virtual managers not deleted, by id
     pub fn virtual_managers(&self) -> Result<Vec<VirtualManager>> {
         let mut statement = self.connection.prepare_cached(
-            "SELECT id, template_id, pair, budget, buy_below, sell_above, mode, created_at, reason
+            "SELECT id, template_id, pair, budget, buy_below, sell_above, mode, created_at, reason,
+                holding
              FROM virtual_managers WHERE account = ?1 AND deleted_at IS NULL ORDER BY id",
         )?;
         let rows = statement.query_map([self.account], |row| {
@@ -69,6 +71,7 @@ impl Storage {
                 row.get::<_, String>(6)?,
                 row.get::<_, i64>(7)?,
                 row.get::<_, String>(8)?,
+                row.get::<_, Option<String>>(9)?,
             ))
         })?;
         let mut managers = Vec::new();
@@ -83,6 +86,7 @@ impl Storage {
                 mode_text,
                 created_at,
                 reason,
+                holding,
             ) = row?;
             managers.push(VirtualManager {
                 config: ManagerConfig {
@@ -92,6 +96,7 @@ impl Storage {
                     buy_below: decimal(buy_below)?,
                     sell_above: decimal(sell_above)?,
                     mode: mode(&mode_text)?,
+                    holding: holding.map(decimal).transpose()?,
                 },
                 template_id,
                 created_at,
@@ -155,6 +160,7 @@ mod tests {
                 buy_below: d("0.5"),
                 sell_above: d("0.8"),
                 mode,
+                holding: None,
             },
             template_id: 2,
             created_at: 42,
@@ -194,6 +200,16 @@ mod tests {
         // deleted, the id stays taken
         assert_eq!(storage.last_virtual_id().unwrap(), Some(1_001_002));
         assert_eq!(storage.virtual_ids().unwrap(), vec![1_000_002, 1_001_002]);
+        // one which started with the crypto of the account
+        let holder = VirtualManager {
+            config: ManagerConfig {
+                holding: Some(d("0.00045")),
+                ..manager(1_002_002, ManagerMode::Active).config
+            },
+            ..manager(1_002_002, ManagerMode::Active)
+        };
+        storage.add_virtual_manager(&holder).unwrap();
+        assert_eq!(storage.virtual_managers().unwrap()[1], holder);
         // an id is added once
         assert!(
             storage

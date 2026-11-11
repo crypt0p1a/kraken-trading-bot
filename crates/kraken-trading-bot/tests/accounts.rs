@@ -40,6 +40,7 @@ fn keeps_the_accounts_apart_in_one_database() {
             buy_below: "1".parse().unwrap(),
             sell_above: "2".parse().unwrap(),
             mode: ManagerMode::Active,
+            holding: None,
         },
         balances: ledger::compute(budget.parse().unwrap(), &[]),
         last_price: "70000".parse().unwrap(),
