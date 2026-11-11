@@ -50,6 +50,7 @@ fn config(id: i32, pair: &str) -> ManagerConfig {
         buy_below: d("1"),
         sell_above: d("1.5"),
         mode: ManagerMode::Active,
+        holding: None,
     }
 }
 

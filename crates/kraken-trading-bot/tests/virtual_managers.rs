@@ -648,6 +648,7 @@ async fn the_ids_used_up_stop_only_the_virtual_managers() {
                 buy_below: d("1"),
                 sell_above: d("1.5"),
                 mode: kraken_trading_bot::config::ManagerMode::Active,
+                holding: None,
             },
             template_id: 1,
             created_at: 0,
@@ -712,5 +713,192 @@ async fn a_closing_virtual_manager_keeps_what_it_couldnt_sell() {
         let outcome = outcome(&mut bot, VIRTUAL).await;
         assert!(matches!(outcome, Outcome::Idle(_)), "{outcome:?}");
     }
+    assert_eq!(virtuals(&bot).len(), 1);
+}
+
+const SELLERS: &str = "virtual_managers: true\nsell_free_base: true";
+/// Two managers of XBTUSD, one of ETHUSD: the free XBT goes to copies of 1 and 3
+const TWO_OF_XBT: &str = "
+  - {id: 1, pair: XBTUSD, budget: 30, buy_below: 1, sell_above: 1.5}
+  - {id: 2, pair: ETHUSD, budget: 20, buy_below: 2, sell_above: 3}
+  - {id: 3, pair: XBTUSD, budget: 20, buy_below: 2, sell_above: 3}";
+
+/// `usd` for the managers of the file, none for copies, and `xbt` no manager holds
+fn with_free_xbt(usd: &str, xbt: &str) -> SimulatedExchange {
+    let exchange = exchange(usd);
+    exchange.deposit("XXBT", d(xbt));
+    exchange
+}
+
+fn holders(bot: &Bot<SimulatedExchange>) -> Vec<ManagerConfig> {
+    virtuals(bot)
+        .into_iter()
+        .filter(|it| it.holding.is_some())
+        .collect()
+}
+
+#[tokio::test]
+async fn leaves_the_free_crypto_alone_unless_asked() {
+    let mut bot = bot(
+        with_free_xbt("70", "0.01"),
+        "virtual_managers: true",
+        TWO_OF_XBT,
+    )
+    .await;
+    for _ in 0..3 {
+        bot.tick().await.unwrap();
+    }
+    assert!(virtuals(&bot).is_empty());
+    assert_eq!(bot.exchange().balance("XXBT"), d("0.01"));
+}
+
+#[tokio::test]
+async fn sells_the_free_crypto_through_a_copy_of_each_manager_of_its_pair() {
+    // 0.0012 XBT, 60 USD at 50000: 30 + 20 for a copy of 1 and of 3, under 10 left for none,
+    // never a copy of 2 (ETHUSD)
+    let mut bot = bot(with_free_xbt("70", "0.0012"), SELLERS, TWO_OF_XBT).await;
+    let first = bot.tick().await.unwrap();
+    let second = bot.tick().await.unwrap();
+
+    let added = holders(&bot);
+    let mut templates: Vec<i32> = added.iter().map(|it| decode(it.id).template).collect();
+    templates.sort();
+    assert_eq!(templates, [1, 3], "{added:?}");
+    let mut held = Decimal::ZERO;
+    for manager in &added {
+        let template = decode(manager.id).template;
+        // what its buy would have bought: 30 at -1% of 50000, 20 at -2%, fees included
+        let (budget, price) = if template == 1 {
+            (d("30"), d("49500"))
+        } else {
+            (d("20"), d("49000"))
+        };
+        assert_eq!(manager.budget, budget);
+        let holding = manager.holding.unwrap();
+        let bought = budget / (price * d("1.0025"));
+        assert!(
+            (holding - bought).abs() <= d("0.00000002"),
+            "{holding} {bought}"
+        );
+        held += manager.holding.unwrap();
+
+        // sold at once, for its budget + sell_above%, fees deducted
+        let outcome = first
+            .outcomes
+            .get(&manager.id)
+            .or(second.outcomes.get(&manager.id))
+            .unwrap();
+        let Outcome::Placed {
+            side: OrderSide::Sell,
+            amount,
+            price,
+            ..
+        } = outcome
+        else {
+            panic!("{outcome:?}");
+        };
+        assert_eq!(Some(*amount), manager.holding);
+        let brought = amount * price * (Decimal::ONE - d("0.0025"));
+        let wanted = budget * (Decimal::ONE + manager.sell_above / Decimal::ONE_HUNDRED);
+        assert!(
+            brought >= wanted && brought - wanted < d("0.01"),
+            "{brought} {wanted}"
+        );
+    }
+    assert!(held <= d("0.0012"));
+
+    // what's left can't pay for the budget of 1 nor 3: no more copies
+    for _ in 0..3 {
+        bot.tick().await.unwrap();
+    }
+    assert_eq!(holders(&bot).len(), 2);
+    assert!(virtuals(&bot).iter().all(|it| it.holding.is_some()));
+}
+
+#[tokio::test]
+async fn a_copy_which_sold_its_crypto_buys_again_with_what_it_brought() {
+    let mut bot = bot(
+        with_free_xbt("30", "0.0007"),
+        SELLERS,
+        "\n  - {id: 1, pair: XBTUSD, budget: 30, buy_below: 1, sell_above: 1.5}",
+    )
+    .await;
+    bot.tick().await.unwrap();
+    let copy = holders(&bot)[0].id;
+    bot.tick().await.unwrap();
+    let balances = bot.storage().manager_balances(copy).unwrap().unwrap().0;
+    // bought at 49500, fees included: the price of the market isn't the one of the position
+    let entry = balances.entry_price.unwrap();
+    assert!((entry - d("49623.75")).abs() < d("1"), "{entry}");
+    assert_eq!(
+        balances.base_in_sell_order,
+        holders(&bot)[0].holding.unwrap()
+    );
+
+    // the price rises above its sell: sold
+    bot.exchange().set_price(BTC, d("51000"));
+    let outcome = outcome(&mut bot, copy).await;
+    let Outcome::Placed {
+        side: OrderSide::Buy,
+        amount,
+        price,
+        ..
+    } = outcome
+    else {
+        panic!("{outcome:?}");
+    };
+    // with 30 + 1.5%: sold at 50496.4, about +1% of the price it was valued at
+    let spent = amount * price * (Decimal::ONE + d("0.0025"));
+    assert!(spent > d("30.4") && spent <= d("30.46"), "{spent}");
+}
+
+#[tokio::test]
+async fn deletes_a_copy_whose_crypto_left_the_account_before_it_sold() {
+    let mut bot = bot(
+        with_free_xbt("30", "0.0007"),
+        SELLERS,
+        "\n  - {id: 1, pair: XBTUSD, budget: 30, buy_below: 1, sell_above: 1.5}",
+    )
+    .await;
+    bot.tick().await.unwrap();
+    let copy = holders(&bot)[0].id;
+    // its sell cancelled, the XBT withdrawn
+    let sell = bot.storage().orders_of(copy).unwrap()[0].txid.clone();
+    bot.exchange().cancel(&sell);
+    let xbt = bot.exchange().balance("XXBT");
+    bot.exchange().deposit("XXBT", -xbt);
+
+    for round in 1..3 {
+        let outcome = outcome(&mut bot, copy).await;
+        assert!(
+            matches!(&outcome, Outcome::Idle(reason) if reason.ends_with(&format!("({round}/3)"))),
+            "{outcome:?}"
+        );
+    }
+    let outcome = outcome(&mut bot, copy).await;
+    assert!(matches!(outcome, Outcome::Deleted(_)), "{outcome:?}");
+    assert!(virtuals(&bot).is_empty());
+}
+
+#[tokio::test]
+async fn rebuilds_a_copy_which_started_with_the_crypto_of_the_account() {
+    let one = "\n  - {id: 1, pair: XBTUSD, budget: 30, buy_below: 1, sell_above: 1.5}";
+    let mut bot = bot(with_free_xbt("30", "0.0007"), SELLERS, one).await;
+    bot.tick().await.unwrap();
+    let before = holders(&bot);
+    assert_eq!(before.len(), 1);
+
+    let mut bot = Bot::new(
+        bot.into_exchange(),
+        Storage::open_in_memory().unwrap(),
+        config(SELLERS, one),
+    )
+    .with_seed(7);
+    bot.prepare().await.unwrap();
+    let report = bot.tick().await.unwrap();
+
+    assert_eq!(holders(&bot), before);
+    assert_eq!(report.outcomes[&before[0].id], Outcome::Waited);
+    // the crypto on sale isn't free: no other copy
     assert_eq!(virtuals(&bot).len(), 1);
 }

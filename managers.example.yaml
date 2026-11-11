@@ -26,6 +26,10 @@ buy_order_timeout: 12h
 # lasts. Their ids are 1000000 + 1000 * order of creation + id of the copied manager: the ids
 # below stay < 1000
 # virtual_managers: true
+# with virtual_managers, the crypto of the account no manager holds (a deposit) is sold too: a copy
+# of the first manager of its pair starts as if its buy had been filled at -buy_below%, and sells
+# for its budget + sell_above%. Off by default: the crypto of the account is left alone
+# sell_free_base: true
 
 managers:
   # id: Kraken userref of the orders of the manager, from 1 to 2147483647, unique, never reused

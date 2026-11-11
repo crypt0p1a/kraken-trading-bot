@@ -5,6 +5,9 @@
 //! - the budget: the first buy is placed with all of it, fees included
 //! - `sell_above`: the last sell brings back what the position cost + `sell_above`%, fees deducted
 //! - `buy_below`: the last buy is at -`buy_below`% of the price of the market when it was placed
+//! - the crypto it started with, when its first order is a sell: a copy which sold the crypto of
+//!   the account no manager held. It sold all of it, and its budget is what that sell brings back
+//!   less `sell_above`%
 //!
 //! A parameter the orders contradict is taken from the orders. A virtual manager whose copied
 //! manager is gone is rebuilt closing, from its orders alone: without any sell, it sells for
@@ -49,6 +52,18 @@ const PRICE_WINDOW: f64 = 60.0;
 pub fn implied_budget(first_buy: &BotOrder, fee_rate: Decimal) -> Option<Decimal> {
     let price = first_buy.limit_price?;
     Some(first_buy.volume * price * (Decimal::ONE + fee_rate))
+}
+
+/// What the crypto sold by the first sell of a copy started with it cost: what the sell brings
+/// back, fees deducted, less `sell_above`%
+pub fn implied_holding_budget(
+    first_sell: &BotOrder,
+    sell_above: Decimal,
+    fee_rate: Decimal,
+) -> Option<Decimal> {
+    let price = first_sell.limit_price?;
+    let brought = price * first_sell.volume * (Decimal::ONE - fee_rate);
+    Some(brought / (Decimal::ONE + percent(sell_above)))
 }
 
 /// The `sell_above` of a sell, from what the position it sells cost
@@ -147,9 +162,22 @@ pub async fn rebuild_one<E: Exchange>(
     let buys = by_time(orders, OrderSide::Buy);
     let sells = by_time(orders, OrderSide::Sell);
 
+    // sold before anything was bought: it started with the crypto of its first sell
+    let first_sell = sells.first().filter(|sell| {
+        buys.first()
+            .is_none_or(|buy| sell.open_time < buy.open_time)
+    });
+    let holding = first_sell.map(|it| it.volume);
+    let implied = match first_sell {
+        Some(sell) => {
+            let above = template.map_or(fallback_sell_above, |it| it.sell_above);
+            implied_holding_budget(sell, above, fee_rate)
+        }
+        None => buys.first().and_then(|it| implied_budget(it, fee_rate)),
+    };
     let budget = choose(
         template.map(|it| it.budget),
-        buys.first().and_then(|it| implied_budget(it, fee_rate)),
+        implied,
         close_budget,
         BUDGET_DECIMALS,
     );
@@ -165,7 +193,7 @@ pub async fn rebuild_one<E: Exchange>(
                 .filter(|it| it.open_time <= sell.open_time && it.txid != sell.txid)
                 .cloned()
                 .collect();
-            let cost = ledger::compute(budget, &before).position_cost;
+            let cost = ledger::compute_holding(budget, holding, &before).position_cost;
             choose(
                 template.map(|it| it.sell_above),
                 implied_sell_above(sell, cost, fee_rate),
@@ -206,6 +234,7 @@ pub async fn rebuild_one<E: Exchange>(
             Some(template) if template.mode == ManagerMode::Active => ManagerMode::Active,
             _ => ManagerMode::Closing,
         },
+        holding,
     }))
 }
 
@@ -263,7 +292,7 @@ async fn rebuild_id<E: Exchange>(
     let holds_orders = orders.iter().any(|it| !it.is_final());
     let (manager, holds, reason) = match found {
         Some(config) => {
-            let balances = ledger::compute(config.budget, orders);
+            let balances = ledger::of(&config, orders);
             let base = balances.base_available + balances.base_in_sell_order;
             let holds = holds_orders || base >= rules.ordermin;
             let source = match template {
@@ -285,6 +314,7 @@ async fn rebuild_id<E: Exchange>(
                 buy_below: Decimal::ZERO,
                 sell_above: Decimal::ZERO,
                 mode: ManagerMode::Closing,
+                holding: None,
             };
             (
                 manager,
@@ -406,6 +436,9 @@ mod tests {
         assert!((sell_above - d("1.5")).abs() < d("0.01"), "{sell_above}");
 
         assert_eq!(implied_sell_above(&sell, Decimal::ZERO, fee), None);
+        // the crypto of the account valued at 30, sold for 30 + 1.5%
+        let budget = implied_holding_budget(&sell, d("1.5"), fee).unwrap();
+        assert!((budget - cost).abs() < d("0.001"), "{budget}");
         assert_eq!(implied_buy_below(&buy, Decimal::ZERO), None);
     }
 
