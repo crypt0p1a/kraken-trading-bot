@@ -1,6 +1,7 @@
 //! What a manager has, computed from its budget and the executions of its orders. Port of the
 //! ManagerLedger of cex-trading-bot, the fees being in the quote (`fciq`)
 
+use crate::config::ManagerConfig;
 use crate::order::BotOrder;
 use kraken_spot_api::trading::OrderSide;
 use rust_decimal::Decimal;
@@ -31,14 +32,34 @@ impl Balances {
 }
 
 pub fn compute(budget: Decimal, orders: &[BotOrder]) -> Balances {
-    let mut quote = budget;
-    let mut base = Decimal::ZERO;
+    compute_holding(budget, None, orders)
+}
+
+/// What the manager has, from its configuration and its orders
+pub fn of(manager: &ManagerConfig, orders: &[BotOrder]) -> Balances {
+    compute_holding(manager.budget, manager.holding, orders)
+}
+
+/// What a manager has which starts with `holding` of the base, bought with all its budget, or
+/// with its budget when None
+pub fn compute_holding(budget: Decimal, holding: Option<Decimal>, orders: &[BotOrder]) -> Balances {
+    let held = holding.unwrap_or_default();
+    let mut quote = if holding.is_some() {
+        Decimal::ZERO
+    } else {
+        budget
+    };
+    let mut base = held;
     let mut quote_in_buy_order = Decimal::ZERO;
     let mut base_in_sell_order = Decimal::ZERO;
 
     // the position is what has been bought and not sold yet, with what it cost
-    let mut position_base = Decimal::ZERO;
-    let mut position_cost = Decimal::ZERO;
+    let mut position_base = held;
+    let mut position_cost = if holding.is_some() {
+        budget
+    } else {
+        Decimal::ZERO
+    };
 
     let mut sorted: Vec<&BotOrder> = orders.iter().collect();
     sorted.sort_by(|a, b| {
@@ -247,6 +268,30 @@ pub(crate) mod tests {
         assert_eq!(balances.position_cost, d("75"));
         assert_eq!(balances.entry_price, Some(d("50000")));
         assert_eq!(balances.quote_available, d("27.5"));
+    }
+
+    #[test]
+    fn starts_with_the_crypto_bought_with_all_the_budget() {
+        let start = compute_holding(d("30"), Some(d("0.0005")), &[]);
+        assert_eq!(start.quote_available, d("0"));
+        assert_eq!(start.base_available, d("0.0005"));
+        assert_eq!(start.position_cost, d("30"));
+        assert_eq!(start.entry_price, Some(d("60000")));
+        // worth its budget at the price it was valued at
+        assert_eq!(start.value(d("60000")), d("30"));
+
+        // sold for 30.6, fees deducted: then a manager like the others
+        let sell = executed(
+            order(1.0, OrderSide::Sell, OrderStatus::Closed, "0.0005", "61300"),
+            "0.0005",
+            "30.65",
+            "0.05",
+        );
+        let sold = compute_holding(d("30"), Some(d("0.0005")), &[sell]);
+        assert_eq!(sold.quote_available, d("30.60"));
+        assert_eq!(sold.base_available, d("0"));
+        assert_eq!(sold.entry_price, None);
+        assert_eq!(compute_holding(d("30"), None, &[]), compute(d("30"), &[]));
     }
 
     #[test]

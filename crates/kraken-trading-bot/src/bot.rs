@@ -10,6 +10,7 @@ use crate::market;
 use crate::notify::{self, OrderChange, OrderEvent};
 use crate::order::BotOrder;
 use crate::pair::PairRules;
+use crate::planner;
 use crate::rebuild;
 use crate::storage::{
     AccountRecord, ActionRecord, ManagerState, Storage, TickerRecord, VirtualManager,
@@ -222,7 +223,7 @@ impl<E: Exchange> Bot<E> {
                         .into_iter()
                         .filter(|it| it.open_time <= order.open_time && it.txid != order.txid)
                         .collect();
-                    let entry = ledger::compute(manager.budget, &before).entry_price;
+                    let entry = ledger::of(manager, &before).entry_price;
                     messages::filled(self.texts(), &label, &notify::view(order), entry)
                 }
                 OrderChange::Ended => messages::ended(self.texts(), &label, &notify::view(order)),
@@ -476,6 +477,9 @@ impl<E: Exchange> Bot<E> {
         if let Some(created) = self.add_virtual_manager(&managers, &markets, &available)? {
             managers.push(created);
         }
+        if let Some(created) = self.add_free_base_manager(&managers, &markets, &available)? {
+            managers.push(created);
+        }
 
         let mut outcomes = HashMap::new();
         for manager in managers.clone() {
@@ -606,7 +610,7 @@ impl<E: Exchange> Bot<E> {
         let mut margins = HashMap::new();
         for manager in managers {
             let quote = &markets[&self.pair_keys[&manager.pair]].rules.quote_asset;
-            let owned = ledger::compute(manager.budget, &self.storage.orders_of(manager.id)?)
+            let owned = ledger::of(manager, &self.storage.orders_of(manager.id)?)
                 .quote_available
                 .max(Decimal::ZERO);
             *margins
@@ -614,6 +618,150 @@ impl<E: Exchange> Bot<E> {
                 .or_insert_with(|| available.get(quote).copied().unwrap_or_default()) -= owned;
         }
         Ok(margins)
+    }
+
+    /// Per base asset: what the account has available that no manager holds. The base of the open
+    /// sell orders isn't available, the base a manager hasn't put on sale yet is its own
+    fn base_margins(
+        &self,
+        managers: &[ManagerConfig],
+        markets: &HashMap<String, Market>,
+        available: &HashMap<String, Decimal>,
+    ) -> BotResult<HashMap<String, Decimal>> {
+        let mut margins = HashMap::new();
+        for manager in managers {
+            let base = &markets[&self.pair_keys[&manager.pair]].rules.base_asset;
+            let owned = ledger::of(manager, &self.storage.orders_of(manager.id)?)
+                .base_available
+                .max(Decimal::ZERO);
+            *margins
+                .entry(base.clone())
+                .or_insert_with(|| available.get(base).copied().unwrap_or_default()) -= owned;
+        }
+        Ok(margins)
+    }
+
+    /// With `sell_free_base`, adds a copy of a manager of the YAML file which starts with the
+    /// crypto of the account no manager holds, as if its buy had just been filled: what its
+    /// budget buys, fees included, at -`buy_below`% of the price of the market. It sells it for
+    /// its budget + `sell_above`%, then trades like any manager. The first active manager of the
+    /// file the free crypto pays for, among the ones with the fewest copies holding crypto, so
+    /// every one gets some: one at most per tick
+    fn add_free_base_manager(
+        &mut self,
+        managers: &[ManagerConfig],
+        markets: &HashMap<String, Market>,
+        available: &HashMap<String, Decimal>,
+    ) -> BotResult<Option<ManagerConfig>> {
+        if !self.config.virtual_managers || !self.config.sell_free_base {
+            return Ok(None);
+        }
+
+        let margins = self.base_margins(managers, markets, available)?;
+        // what the buy of a manager of the file would have bought, if the free crypto pays for it
+        let holding_of = |manager: &ManagerConfig| {
+            let market = &markets[&self.pair_keys[&manager.pair]];
+            let price = planner::buy_price(market.reference, manager.buy_below, &market.rules);
+            let amount =
+                planner::buy_amount(manager.budget, price, market.fee_rate, &market.rules)?;
+            let free = margins
+                .get(&market.rules.base_asset)
+                .copied()
+                .unwrap_or_default();
+            (amount <= free).then_some((amount, price))
+        };
+        let copies: Vec<i32> = self
+            .storage
+            .virtual_managers()?
+            .into_iter()
+            .filter(|it| it.config.holding.is_some())
+            .map(|it| it.template_id)
+            .collect();
+        let candidates: Vec<(&ManagerConfig, usize)> = self
+            .config
+            .managers
+            .iter()
+            .filter(|it| it.mode == ManagerMode::Active && holding_of(it).is_some())
+            .map(|it| (it, copies.iter().filter(|id| **id == it.id).count()))
+            .collect();
+        let Some(fewest) = candidates.iter().map(|it| it.1).min() else {
+            return Ok(None);
+        };
+        let Some(template) = candidates
+            .into_iter()
+            .find(|it| it.1 == fewest)
+            .map(|it| it.0.clone())
+        else {
+            return Ok(None);
+        };
+        let Some((holding, price)) = holding_of(&template) else {
+            return Ok(None);
+        };
+        let Some(id) = self.next_virtual_id(template.id)? else {
+            return Ok(None);
+        };
+
+        let market = &markets[&self.pair_keys[&template.pair]];
+        let base = &market.rules.base_asset;
+        let reason = format!(
+            "copy of manager {}, sells {} of the {} {base} held by no manager, as bought at {} (-{}% of {})",
+            template.id,
+            holding.normalize(),
+            margins[base].round_dp(8).normalize(),
+            price.normalize(),
+            template.buy_below.normalize(),
+            market.reference.normalize()
+        );
+        let config = ManagerConfig {
+            id,
+            mode: ManagerMode::Active,
+            holding: Some(holding),
+            ..template.clone()
+        };
+        self.created(&config, template.id, reason)?;
+        Ok(Some(config))
+    }
+
+    /// The id of the next virtual manager, a copy of `template`. None when they are used up: no
+    /// more virtual managers, the others go on
+    fn next_virtual_id(&self, template: i32) -> BotResult<Option<i32>> {
+        let sequence = self
+            .storage
+            .last_virtual_id()?
+            .and_then(VirtualId::decode)
+            .map_or(0, |it| it.sequence + 1);
+        let id = VirtualId { sequence, template }.encode();
+        if id.is_none() {
+            tracing::warn!(
+                sequence,
+                "no id left for a virtual manager: none is added anymore"
+            );
+        }
+        Ok(id)
+    }
+
+    /// Saves the virtual manager added, and tells it
+    fn created(&self, config: &ManagerConfig, template: i32, reason: String) -> BotResult<()> {
+        let at = now_millis();
+        self.storage.add_virtual_manager(&VirtualManager {
+            config: config.clone(),
+            template_id: template,
+            created_at: at,
+            reason: reason.clone(),
+        })?;
+        self.storage.record_action(&ActionRecord {
+            manager_id: config.id,
+            at,
+            kind: "virtual_created".into(),
+            amount: Some(config.budget),
+            price: None,
+            reason: Some(reason.clone()),
+            dry_run: self.config.dry_run,
+            txid: None,
+            error: None,
+        })?;
+        tracing::info!(manager = config.id, template, pair = %config.pair, budget = %config.budget, holding = ?config.holding, %reason, "virtual manager added");
+        Ok(())
     }
 
     /// Adds a copy of a manager of the YAML file, picked at random among the active ones whose
@@ -646,22 +794,7 @@ impl<E: Exchange> Bot<E> {
             return Ok(None);
         }
         let template = candidates[self.random.usize(..candidates.len())].clone();
-
-        let sequence = self
-            .storage
-            .last_virtual_id()?
-            .and_then(VirtualId::decode)
-            .map_or(0, |it| it.sequence + 1);
-        // the ids are used up: no more virtual managers, the others go on
-        let Some(id) = (VirtualId {
-            sequence,
-            template: template.id,
-        })
-        .encode() else {
-            tracing::warn!(
-                sequence,
-                "no id left for a virtual manager: none is added anymore"
-            );
+        let Some(id) = self.next_virtual_id(template.id)? else {
             return Ok(None);
         };
 
@@ -676,25 +809,7 @@ impl<E: Exchange> Bot<E> {
             mode: ManagerMode::Active,
             ..template.clone()
         };
-        let at = now_millis();
-        self.storage.add_virtual_manager(&VirtualManager {
-            config: config.clone(),
-            template_id: template.id,
-            created_at: at,
-            reason: reason.clone(),
-        })?;
-        self.storage.record_action(&ActionRecord {
-            manager_id: id,
-            at,
-            kind: "virtual_created".into(),
-            amount: Some(config.budget),
-            price: None,
-            reason: Some(reason.clone()),
-            dry_run: self.config.dry_run,
-            txid: None,
-            error: None,
-        })?;
-        tracing::info!(manager = id, template = template.id, pair = %config.pair, budget = %config.budget, %reason, "virtual manager added");
+        self.created(&config, template.id, reason)?;
         Ok(Some(config))
     }
 
@@ -762,8 +877,28 @@ impl<E: Exchange> Bot<E> {
             }
             Action::Idle(reason) => self.idle(manager, reason),
             Action::Sell { amount, price } => {
-                self.place(manager, market, OrderSide::Sell, amount, price, &balances)
-                    .await
+                let base_asset = &market.rules.base_asset;
+                let in_account = available.get(base_asset).copied().unwrap_or_default();
+                // the crypto it started with, gone from the account (withdrawn): a copy which
+                // never traded holds nothing of its own, it's deleted like one which can't buy
+                if manager.holding.is_some()
+                    && amount > in_account
+                    && orders.iter().all(|it| it.volume_executed.is_zero())
+                {
+                    let reason = format!(
+                        "the account has {} {base_asset} available, {} to sell",
+                        in_account.normalize(),
+                        amount.normalize()
+                    );
+                    return self.starve(manager, reason, Decimal::ZERO);
+                }
+                let outcome = self
+                    .place(manager, market, OrderSide::Sell, amount, price, &balances)
+                    .await?;
+                if matches!(outcome, Outcome::Placed { .. }) {
+                    available.insert(base_asset.clone(), in_account - amount);
+                }
+                Ok(outcome)
             }
             Action::Buy { amount, price } => {
                 let cost = amount * price * (Decimal::ONE + market.fee_rate);
@@ -1156,7 +1291,7 @@ pub fn ensure_limit(order: &NewOrder) -> Result<(), String> {
 fn manager_state(manager: &ManagerConfig, market: &Market, orders: &[BotOrder]) -> ManagerState {
     ManagerState {
         config: manager.clone(),
-        balances: ledger::compute(manager.budget, orders),
+        balances: ledger::of(manager, orders),
         last_price: market.reference,
         at: now_millis(),
     }
