@@ -5,8 +5,10 @@
 //! |--------|----------------|
 //! | [`data`] | what's read from the database |
 //! | [`stats`] | the P&L realized by the sells, the totals, the P&L over time |
+//! | [`pairs`] | the markets one by one: candles, returns, drawdown, the levels of the managers |
 //! | [`app`] | what's selected and shown, the keys |
 //! | [`ui`] | the screen |
+//! | [`settings`] | what the screen shows, kept from a run to the next |
 //! | [`desk`] | the loop: the screen, the keys, the reads of the database |
 //! | [`format`], [`theme`] | the numbers and the times, the colors |
 //! | [`svg`] | a screen as an SVG image: the screenshots |
@@ -15,6 +17,8 @@ pub mod app;
 pub mod data;
 pub mod desk;
 pub mod format;
+pub mod pairs;
+pub mod settings;
 pub mod sort;
 pub mod stats;
 pub mod svg;

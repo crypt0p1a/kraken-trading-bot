@@ -9,7 +9,7 @@
 
 use kraken_dashboard::app::App;
 use kraken_dashboard::data::Database;
-use kraken_dashboard::desk;
+use kraken_dashboard::{desk, settings};
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -74,6 +74,10 @@ fn main() -> ExitCode {
 
     let mut app = App::new(options.database.display().to_string());
     app.refresh(&database, true);
+    // the screen as it was left, once the accounts of the database are known
+    let settings = settings::path_of(&options.database);
+    app.apply(settings::load(&settings));
+    app.refresh(&database, true);
 
     let mut terminal = ratatui::init();
     let result = desk::run(
@@ -81,6 +85,7 @@ fn main() -> ExitCode {
         &database,
         &mut app,
         options.refresh,
+        Some(&settings),
         |frame| {
             // the presses only: the terminals sending the releases too would count each key twice
             if event::poll(frame)?

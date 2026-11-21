@@ -41,6 +41,9 @@ struct Pair {
     volatility: f64,
     decimals: u32,
     history: Vec<f64>,
+    /// What was traded over 24 hours, in the base: it wanders around the usual one
+    volume: f64,
+    usual_volume: f64,
 }
 
 struct Manager {
@@ -126,6 +129,8 @@ fn main() {
             volatility: 0.22,
             decimals: 1,
             history: Vec::new(),
+            volume: 1_200.0,
+            usual_volume: 1_200.0,
         },
         Pair {
             key: "XETHZUSD",
@@ -136,6 +141,8 @@ fn main() {
             volatility: 0.30,
             decimals: 2,
             history: Vec::new(),
+            volume: 24_000.0,
+            usual_volume: 24_000.0,
         },
         Pair {
             key: "SOLUSD",
@@ -146,6 +153,8 @@ fn main() {
             volatility: 0.42,
             decimals: 2,
             history: Vec::new(),
+            volume: 310_000.0,
+            usual_volume: 310_000.0,
         },
     ];
     let mut managers = vec![
@@ -174,7 +183,12 @@ fn main() {
             pair.price = pair.base * pair.drift.exp();
             pair.history.push(pair.price);
             let price = decimal(pair.price, pair.decimals);
-            let spread = pair.price * 0.00008;
+            // the book widens when the market moves, the volume grows with the moves
+            let moved = noise.abs() / (pair.volatility / 100.0);
+            let spread = pair.price * (0.00005 + 0.00006 * moved * fastrand::f64());
+            let usual = pair.usual_volume;
+            pair.volume += (usual * (0.8 + 0.6 * moved) - pair.volume) * 0.02
+                + (fastrand::f64() - 0.5) * usual * 0.01;
             storage
                 .record_ticker(&TickerRecord {
                     pair: pair.key.into(),
@@ -182,7 +196,7 @@ fn main() {
                     last: price,
                     bid: decimal(pair.price - spread, pair.decimals),
                     ask: decimal(pair.price + spread, pair.decimals),
-                    volume_24h: decimal(1_000.0 + fastrand::f64() * 500.0, 4),
+                    volume_24h: decimal(pair.volume, 4),
                     vwap_24h: decimal(pair.price * 0.998, pair.decimals),
                 })
                 .unwrap();

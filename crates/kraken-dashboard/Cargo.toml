@@ -16,6 +16,9 @@ path = "src/main.rs"
 ratatui.workspace = true
 rusqlite.workspace = true
 rust_decimal.workspace = true
+# the settings of the screen, kept next to the database
+serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 # the demo database and the tests are written by the storage of the bot itself

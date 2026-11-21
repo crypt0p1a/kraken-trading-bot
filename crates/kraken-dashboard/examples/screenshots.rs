@@ -19,7 +19,7 @@ const WIDTH: u16 = 200;
 const HEIGHT: u16 = 50;
 
 /// The keys pressed, then the screen saved
-const SCREENS: [(&str, &str, &[KeyCode]); 4] = [
+const SCREENS: [(&str, &str, &[KeyCode]); 5] = [
     (
         "desk",
         "the desk: the key figures, the managers, the orders, the markets, the tape",
@@ -34,6 +34,11 @@ const SCREENS: [(&str, &str, &[KeyCode]); 4] = [
         "charts",
         "every chart, on 7 days",
         &[KeyCode::Char('3'), KeyCode::Char('d')],
+    ),
+    (
+        "markets",
+        "the markets, the first pair of the YAML file, on 7 days",
+        &[KeyCode::Char('3'), KeyCode::Char('d'), KeyCode::Char('d')],
     ),
     ("help", "the keys", &[KeyCode::Char('?')]),
 ];

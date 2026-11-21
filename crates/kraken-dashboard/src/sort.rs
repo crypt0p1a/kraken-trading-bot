@@ -61,7 +61,7 @@ pub fn columns(panel: Panel) -> &'static [Column] {
 }
 
 /// The column a table follows, and in which direction
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Sort {
     pub column: usize,
     pub descending: bool,
