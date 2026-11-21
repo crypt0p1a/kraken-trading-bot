@@ -556,12 +556,78 @@ fn draws_an_empty_database() {
     assert!(text.contains("NO MANAGER YET"), "{text}");
     assert!(text.contains("NO ORDER YET"), "{text}");
     let mut app = app;
+    // the charts too, each in its words: the panel of the managers says "NO MANAGER YET", the
+    // chart of the price "NO MANAGER" alone
+    app.charts[0] = Chart::Price;
+    let price = screen(&app, 140, 40);
+    assert!(price.contains("PRICE"), "{price}");
+    assert!(
+        price.matches("NO MANAGER").count() > price.matches("NO MANAGER YET").count(),
+        "{price}"
+    );
+    app.charts[0] = Chart::Allocation;
+    let allocation = screen(&app, 140, 40);
+    assert!(allocation.contains("BY CRYPTO"), "{allocation}");
+    assert!(
+        allocation.contains("NOT ENOUGH TICKS IN THE RANGE"),
+        "{allocation}"
+    );
     app.on_key(key('d'));
     app.on_key(key('d'));
     assert!(screen(&app, 140, 40).contains("NO TICKER YET"));
     // nothing to go through
     app.on_key(KeyEvent::from(KeyCode::Right));
     assert_eq!(app.pair, None);
+}
+
+#[test]
+fn draws_the_open_orders_on_the_price() {
+    let fixture = path("open-sell");
+    let storage = write(&fixture.path);
+    let seconds = now_millis() as f64 / 1000.0 - 600.0;
+    storage
+        .upsert_orders(&[order(
+            "O5",
+            1,
+            OrderSide::Sell,
+            OrderStatus::Open,
+            "0.0001",
+            "0",
+            "77000",
+            "0",
+            "0",
+            seconds,
+        )])
+        .unwrap();
+    let (mut app, _database) = app(&fixture.path);
+    app.charts[0] = Chart::Price;
+    let text = screen(&app, 180, 48);
+    // the buy and the sell of manager 1, each a level of its own
+    assert!(text.contains("BUY 75,500.0"), "{text}");
+    assert!(text.contains("SELL 77,000.0"), "{text}");
+}
+
+#[test]
+fn draws_a_change_of_the_price_from_a_first_price_of_zero() {
+    let fixture = path("zero-price");
+    let storage = write(&fixture.path);
+    storage
+        .record_ticker(&TickerRecord {
+            pair: "XXBTZUSD".into(),
+            at: now_millis() - 900_000,
+            last: d("0"),
+            bid: d("0"),
+            ask: d("0"),
+            volume_24h: d("0"),
+            vwap_24h: d("0"),
+        })
+        .unwrap();
+    let (mut app, _database) = app(&fixture.path);
+    app.charts[0] = Chart::Price;
+    let text = screen(&app, 180, 48);
+    // the change from the first price known, 75,800: neither infinite nor a NaN
+    assert!(text.contains("XBTUSD 76,100.0 ▲ +0.40%"), "{text}");
+    assert!(!text.contains("inf") && !text.contains("NaN"), "{text}");
 }
 
 #[test]
