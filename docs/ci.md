@@ -28,6 +28,9 @@
   Kraken refuses its fake key. The cache mounts of the Dockerfile (cargo registry and target) and
   its layers are kept in the cache of GitHub between the runs
 
+[Dependabot](../.github/dependabot.yml) opens a pull request a week per ecosystem, its updates
+grouped: the crates, the actions of the workflows and the base images of the Dockerfile.
+
 The runs of a pull request are cancelled by a new push to it; the runs of `main` always go to the
 end, to save the caches the pull requests start from.
 
