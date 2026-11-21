@@ -222,15 +222,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --all-targets --locked
 
-  audit:
-    name: Vulnerabilities of the dependencies
+  # deny.toml: the vulnerabilities (RustSec), the licenses, the bans and the sources of the
+  # dependencies
+  deny:
+    name: Dependencies (cargo deny)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: taiki-e/install-action@v2
+      - uses: EmbarkStudios/cargo-deny-action@v2
         with:
-          tool: cargo-audit
-      - run: cargo audit
+          command: check advisories licenses bans sources
 
   live-private:
     name: Dry run on the real Kraken (orders validated only)

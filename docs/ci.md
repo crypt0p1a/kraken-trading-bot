@@ -18,7 +18,9 @@
   `CODECOV_TOKEN` secret is set
 - **msrv**: the workspace checked with the oldest Rust it supports, the `rust-version` of
   `Cargo.toml`
-- **audit**: `cargo audit` of the dependencies
+- **deny**: [cargo deny](https://github.com/EmbarkStudios/cargo-deny) with
+  [`deny.toml`](../deny.toml): the vulnerabilities of the RustSec database, the licenses
+  (permissive only), the bans and the sources (crates.io only) of the dependencies
 - **screenshots**: the screens of the dashboard on the demo database (`scripts/screenshots.sh`), as
   an artifact: what a change looks like, to compare with `assets/screenshots`
 - **docker**: the image of the bot on amd64 and arm64. It must refuse to start without
