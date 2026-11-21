@@ -217,4 +217,27 @@ mod tests {
                 .is_err()
         );
     }
+
+    #[test]
+    fn refuses_a_mode_it_doesnt_know() {
+        let storage = Storage::open_in_memory().unwrap();
+        storage
+            .add_virtual_manager(&manager(1_000_002, ManagerMode::Closing))
+            .unwrap();
+        storage
+            .connection
+            .execute("UPDATE virtual_managers SET mode = 'paused'", [])
+            .unwrap();
+        assert!(matches!(
+            storage.virtual_managers(),
+            Err(StorageError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn fails_without_its_table() {
+        let storage = Storage::open_in_memory().unwrap();
+        storage.drop_table("virtual_managers");
+        assert!(storage.virtual_managers().is_err());
+    }
 }

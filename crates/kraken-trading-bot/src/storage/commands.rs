@@ -52,11 +52,17 @@ impl Storage {
     /// Asks for the command, unless it's under way
     pub fn request_command(&self, key: &str, at: i64) -> Result<()> {
         self.connection.execute(
-            "INSERT INTO commands (account, key, state, updated_at) VALUES (?1, ?2, 'refresh', ?3)
-             ON CONFLICT (account, key) DO UPDATE SET state = 'refresh',
+            "INSERT INTO commands (account, key, state, updated_at) VALUES (?1, ?2, ?4, ?3)
+             ON CONFLICT (account, key) DO UPDATE SET state = ?4,
                 updated_at = excluded.updated_at
-             WHERE state <> 'pending'",
-            params![self.account, key, at],
+             WHERE state <> ?5",
+            params![
+                self.account,
+                key,
+                at,
+                CommandState::Refresh.name(),
+                CommandState::Pending.name()
+            ],
         )?;
         Ok(())
     }
@@ -64,9 +70,15 @@ impl Storage {
     /// Starts the command if it was asked for: `refresh` becomes `pending`. False when it wasn't
     pub fn start_command(&self, key: &str, at: i64) -> Result<bool> {
         let changed = self.connection.execute(
-            "UPDATE commands SET state = 'pending', updated_at = ?2
-             WHERE account = ?3 AND key = ?1 AND state = 'refresh'",
-            params![key, at, self.account],
+            "UPDATE commands SET state = ?4, updated_at = ?2
+             WHERE account = ?3 AND key = ?1 AND state = ?5",
+            params![
+                key,
+                at,
+                self.account,
+                CommandState::Pending.name(),
+                CommandState::Refresh.name()
+            ],
         )?;
         Ok(changed > 0)
     }
@@ -74,9 +86,15 @@ impl Storage {
     /// Ends the command under way: `pending` becomes `idle`. A command asked for meanwhile stays
     pub fn end_command(&self, key: &str, at: i64) -> Result<()> {
         self.connection.execute(
-            "UPDATE commands SET state = 'idle', updated_at = ?2
-             WHERE account = ?3 AND key = ?1 AND state = 'pending'",
-            params![key, at, self.account],
+            "UPDATE commands SET state = ?4, updated_at = ?2
+             WHERE account = ?3 AND key = ?1 AND state = ?5",
+            params![
+                key,
+                at,
+                self.account,
+                CommandState::Idle.name(),
+                CommandState::Pending.name()
+            ],
         )?;
         Ok(())
     }
@@ -123,5 +141,27 @@ mod tests {
             Some(CommandState::Refresh)
         );
         assert_eq!(storage.command("unknown").unwrap(), None);
+    }
+
+    #[test]
+    fn refuses_a_state_it_doesnt_know() {
+        let storage = Storage::open_in_memory().unwrap();
+        storage
+            .connection
+            .execute("UPDATE commands SET state = 'paused'", [])
+            .unwrap();
+        assert!(matches!(
+            storage.command(FORCED_TICK),
+            Err(StorageError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn fails_when_its_writes_are_refused() {
+        let storage = Storage::open_in_memory().unwrap();
+        storage.refuse_writes();
+        assert!(storage.request_command(FORCED_TICK, 1).is_err());
+        assert!(storage.start_command(FORCED_TICK, 2).is_err());
+        assert!(storage.end_command(FORCED_TICK, 3).is_err());
     }
 }

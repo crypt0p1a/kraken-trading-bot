@@ -424,4 +424,31 @@ mod tests {
         );
         assert_eq!(storage.last_indicators("XETHZEUR").unwrap(), None);
     }
+
+    #[test]
+    fn fails_when_its_writes_are_refused_or_its_tables_are_gone() {
+        let storage = Storage::open_in_memory().unwrap();
+        storage.drop_table("account_snapshots");
+        storage.drop_table("tickers");
+        assert!(storage.last_accounts().is_err());
+        assert!(storage.ticker_count("XXBTZUSD").is_err());
+
+        storage.refuse_writes();
+        let indicators = Indicators {
+            close: 100.0,
+            atr_percent: 0.4,
+            ema_fast: 101.0,
+            ema_slow: 100.0,
+            slope_24h_percent: 1.5,
+            range_24h_percent: 3.2,
+            change_24h_percent: 1.1,
+            candles: 96,
+        };
+        assert!(
+            storage
+                .record_indicators("XXBTZEUR", 1, &indicators)
+                .is_err()
+        );
+        assert!(storage.record_action(&action(1, ActionKind::Buy)).is_err());
+    }
 }

@@ -189,4 +189,14 @@ mod tests {
         // 20 USD + 0.0002 BTC at 51000
         assert_eq!(state(1, "20").value(), d("30.2"));
     }
+
+    #[test]
+    fn fails_without_the_table_of_its_history() {
+        let storage = Storage::open_in_memory().unwrap();
+        storage.drop_table("manager_snapshots");
+        // its current state is saved first, in the same transaction: nothing is kept
+        assert!(storage.save_manager(&state(1, "20")).is_err());
+        assert_eq!(storage.manager_balances(4).unwrap(), None);
+        assert!(storage.snapshot_count(4).is_err());
+    }
 }

@@ -407,8 +407,8 @@ impl Storage {
         )?;
         self.connection.execute(
             "INSERT OR IGNORE INTO commands (account, key, state, updated_at)
-             VALUES (?1, ?2, 'idle', 0)",
-            params![id, FORCED_TICK],
+             VALUES (?1, ?2, ?3, 0)",
+            params![id, FORCED_TICK, CommandState::Idle.name()],
         )?;
         Ok(id)
     }
@@ -438,6 +438,25 @@ impl Storage {
             params![self.account, key, value],
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+impl Storage {
+    /// Every write refused from now on, as on a read-only file or a full disk
+    pub(crate) fn refuse_writes(&self) {
+        self.connection
+            .pragma_update(None, "query_only", true)
+            .unwrap();
+    }
+
+    /// The table gone, as in a database damaged or written by something else
+    pub(crate) fn drop_table(&self, table: &str) {
+        self.connection
+            .execute_batch(&format!(
+                "PRAGMA foreign_keys = OFF; DROP TABLE {table}; PRAGMA foreign_keys = ON;"
+            ))
+            .unwrap();
     }
 }
 
@@ -533,6 +552,51 @@ mod tests {
             .pragma_update(None, "user_version", 99)
             .unwrap();
         assert!(matches!(storage.migrate(), Err(StorageError::Invalid(_))));
+    }
+
+    /// A folder of its own in the temporary folder, removed first
+    fn folder(name: &str) -> std::path::PathBuf {
+        let folder =
+            std::env::temp_dir().join(format!("kraken-bot-test-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        folder
+    }
+
+    #[test]
+    fn refuses_a_folder_it_cant_create() {
+        let folder = folder("not-a-folder");
+        // a file where its folder should be
+        let file = folder.join("file");
+        std::fs::write(&file, "").unwrap();
+        assert!(matches!(
+            Storage::open(&file.join("bot.sqlite")),
+            Err(StorageError::Invalid(_))
+        ));
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn refuses_a_database_without_its_accounts_or_commands() {
+        let folder = folder("damaged");
+        for table in ["accounts", "commands"] {
+            let path = folder.join(format!("{table}.sqlite"));
+            Storage::open(&path).unwrap().drop_table(table);
+            assert!(
+                Storage::open_account(&path, "alice").is_err(),
+                "without {table}"
+            );
+        }
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn fails_when_its_writes_are_refused() {
+        let storage = Storage::open_in_memory().unwrap();
+        storage.refuse_writes();
+        assert!(storage.set_state("key", "1").is_err());
+        // reading still works
+        assert_eq!(storage.state("key").unwrap(), None);
     }
 
     #[test]
