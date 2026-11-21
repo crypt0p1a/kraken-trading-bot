@@ -3,7 +3,6 @@
 
 use super::{Bot, Market, Outcome};
 use crate::BotResult;
-use crate::clock::now_millis;
 use crate::config::ManagerConfig;
 use crate::decimal::percent;
 use crate::exchange::Exchange;
@@ -58,15 +57,11 @@ impl<E: Exchange> Bot<E> {
             placed_from.round_dp(8).normalize()
         );
         let mut record = ActionRecord {
-            manager_id: manager.id,
-            at: now_millis(),
-            kind: ActionKind::BuyCancelled,
             amount: Some(order.volume),
             price: Some(limit),
             reason: Some(reason.clone()),
-            dry_run: self.config.dry_run,
             txid: Some(order.txid.clone()),
-            error: None,
+            ..self.action(manager.id, ActionKind::BuyCancelled)
         };
         match self.exchange.cancel_order(&order.txid).await {
             Ok(true) => {
@@ -83,13 +78,7 @@ impl<E: Exchange> Bot<E> {
             Err(error) => {
                 tracing::warn!(manager = manager.id, txid = %order.txid, %error, "the buy couldn't be cancelled");
                 record.error = Some(error.to_string());
-                let last = self.storage.actions_of(manager.id, 1)?;
-                let repeated = last
-                    .first()
-                    .is_some_and(|it| it.kind == record.kind && it.error == record.error);
-                if !repeated {
-                    self.storage.record_action(&record)?;
-                }
+                self.record_unless_repeated(&record, |last| last.error == record.error)?;
                 Ok(Some(Outcome::Failed(format!(
                     "the buy couldn't be cancelled: {error}"
                 ))))

@@ -225,15 +225,10 @@ impl<E: Exchange> Bot<E> {
             reason: reason.clone(),
         })?;
         self.storage.record_action(&ActionRecord {
-            manager_id: config.id,
             at,
-            kind: ActionKind::VirtualCreated,
             amount: Some(config.budget),
-            price: None,
             reason: Some(reason.clone()),
-            dry_run: self.config.dry_run,
-            txid: None,
-            error: None,
+            ..self.action(config.id, ActionKind::VirtualCreated)
         })?;
         tracing::info!(manager = config.id, template, pair = %config.pair, budget = %config.budget, holding = ?config.holding, %reason, "virtual manager added");
         Ok(())
@@ -340,15 +335,9 @@ impl<E: Exchange> Bot<E> {
         self.storage
             .delete_virtual_manager(manager.id, at, &reason)?;
         self.storage.record_action(&ActionRecord {
-            manager_id: manager.id,
             at,
-            kind: ActionKind::VirtualDeleted,
-            amount: None,
-            price: None,
             reason: Some(reason.clone()),
-            dry_run: self.config.dry_run,
-            txid: None,
-            error: None,
+            ..self.action(manager.id, ActionKind::VirtualDeleted)
         })?;
         self.starved.lock().unwrap().remove(&manager.id);
         tracing::info!(manager = manager.id, %reason, "virtual manager deleted");

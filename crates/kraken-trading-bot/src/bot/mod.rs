@@ -1,6 +1,7 @@
 //! A tick of the bot: synchronizes the orders, then each manager decides and acts. Port of the
 //! ManagersPool of cex-trading-bot
 
+mod actions;
 mod manager;
 mod markets;
 mod notifications;

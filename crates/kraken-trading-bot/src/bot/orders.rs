@@ -2,7 +2,6 @@
 //! and notified once accepted
 
 use super::{Bot, Market, Outcome};
-use crate::clock::now_millis;
 use crate::config::ManagerConfig;
 use crate::exchange::Exchange;
 use crate::ledger::Balances;
@@ -76,15 +75,10 @@ impl<E: Exchange> Bot<E> {
             OrderSide::Sell => ActionKind::Sell,
         };
         let mut record = ActionRecord {
-            manager_id: manager.id,
-            at: now_millis(),
-            kind,
             amount: Some(amount),
             price: Some(price),
             reason: Some(reason),
-            dry_run,
-            txid: None,
-            error: None,
+            ..self.action(manager.id, kind)
         };
 
         if let Err(error) = ensure_limit(&request) {

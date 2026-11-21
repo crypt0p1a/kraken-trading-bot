@@ -334,15 +334,9 @@ async fn rebuild_id<E: Exchange>(
         storage.delete_virtual_manager(id, now_ms, &format!("{reason}: holds nothing"))?;
     }
     storage.record_action(&ActionRecord {
-        manager_id: id,
-        at: now_ms,
-        kind: ActionKind::VirtualRebuilt,
         amount: Some(manager.budget),
-        price: None,
         reason: Some(reason.clone()),
-        dry_run: config.dry_run,
-        txid: None,
-        error: None,
+        ..ActionRecord::new(id, now_ms, ActionKind::VirtualRebuilt, config.dry_run)
     })?;
     tracing::info!(manager = id, holds, pair = %manager.pair, budget = %manager.budget, buy_below = %manager.buy_below, sell_above = %manager.sell_above, %reason, "virtual manager rebuilt");
     Ok(Some(Rebuilt {

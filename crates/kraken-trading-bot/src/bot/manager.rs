@@ -131,23 +131,11 @@ impl<E: Exchange> Bot<E> {
     /// Records the reason, unless it's the same as the last action of the manager
     pub(super) fn idle(&self, manager: &ManagerConfig, reason: String) -> BotResult<Outcome> {
         tracing::info!(manager = manager.id, %reason, "idle");
-        let last = self.storage.actions_of(manager.id, 1)?;
-        let repeated = last
-            .first()
-            .is_some_and(|it| it.kind == ActionKind::Idle && it.reason.as_deref() == Some(&reason));
-        if !repeated {
-            self.storage.record_action(&ActionRecord {
-                manager_id: manager.id,
-                at: now_millis(),
-                kind: ActionKind::Idle,
-                amount: None,
-                price: None,
-                reason: Some(reason.clone()),
-                dry_run: self.config.dry_run,
-                txid: None,
-                error: None,
-            })?;
-        }
+        let record = ActionRecord {
+            reason: Some(reason.clone()),
+            ..self.action(manager.id, ActionKind::Idle)
+        };
+        self.record_unless_repeated(&record, |last| last.reason == record.reason)?;
         Ok(Outcome::Idle(reason))
     }
 }

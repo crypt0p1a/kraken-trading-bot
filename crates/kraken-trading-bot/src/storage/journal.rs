@@ -70,6 +70,24 @@ pub struct ActionRecord {
     pub error: Option<String>,
 }
 
+impl ActionRecord {
+    /// An action without amount, price, reason, txid or error: what it has is set after it,
+    /// `ActionRecord { reason: Some(..), ..ActionRecord::new(..) }`
+    pub fn new(manager_id: i32, at: i64, kind: ActionKind, dry_run: bool) -> Self {
+        Self {
+            manager_id,
+            at,
+            kind,
+            amount: None,
+            price: None,
+            reason: None,
+            dry_run,
+            txid: None,
+            error: None,
+        }
+    }
+}
+
 /// The price of a pair at a tick
 #[derive(Debug, Clone, PartialEq)]
 pub struct TickerRecord {
@@ -119,7 +137,6 @@ impl Storage {
         Ok(())
     }
 
-    /// The last actions of a manager, most recent first
     /// The bot cancelled the order itself: a buy the price left behind
     pub fn cancelled_by_the_bot(&self, txid: &str) -> Result<bool> {
         Ok(self.connection.query_row(
@@ -130,6 +147,12 @@ impl Storage {
         )?)
     }
 
+    /// The last action of a manager
+    pub fn last_action(&self, manager_id: i32) -> Result<Option<ActionRecord>> {
+        Ok(self.actions_of(manager_id, 1)?.into_iter().next())
+    }
+
+    /// The last actions of a manager, most recent first
     pub fn actions_of(&self, manager_id: i32, limit: usize) -> Result<Vec<ActionRecord>> {
         let mut statement = self.connection.prepare_cached(
             "SELECT manager_id, at, kind, amount, price, reason, dry_run, txid, error FROM actions
@@ -294,15 +317,9 @@ mod tests {
 
     fn action(at: i64, kind: ActionKind) -> ActionRecord {
         ActionRecord {
-            manager_id: 1,
-            at,
-            kind,
             amount: Some(d("0.0006")),
             price: Some(d("49500")),
-            reason: None,
-            dry_run: true,
-            txid: None,
-            error: None,
+            ..ActionRecord::new(1, at, kind, true)
         }
     }
 
@@ -332,6 +349,8 @@ mod tests {
         );
         assert_eq!(actions[1], action(1, ActionKind::Buy));
         assert_eq!(storage.actions_of(1, 1).unwrap().len(), 1);
+        assert_eq!(storage.last_action(1).unwrap(), Some(actions[0].clone()));
+        assert_eq!(storage.last_action(3).unwrap(), None);
     }
 
     #[test]
