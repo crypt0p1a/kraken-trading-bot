@@ -302,4 +302,57 @@ mod tests {
             Some(crate::planner::tests::d("50000.1"))
         );
     }
+
+    #[test]
+    fn keeps_every_status_of_an_order() {
+        let storage = Storage::open_in_memory().unwrap();
+        let statuses = [
+            OrderStatus::Pending,
+            OrderStatus::Open,
+            OrderStatus::Closed,
+            OrderStatus::Canceled,
+            OrderStatus::Expired,
+            OrderStatus::Unknown,
+        ];
+        for (time, status) in statuses.into_iter().enumerate() {
+            let order = order(time as f64, OrderSide::Sell, status, "0.001", "50000");
+            storage.upsert_orders(std::slice::from_ref(&order)).unwrap();
+            assert_eq!(storage.order(&order.txid).unwrap().unwrap().status, status);
+        }
+    }
+
+    #[test]
+    fn reads_a_status_it_doesnt_know_as_unknown_and_refuses_a_side_it_doesnt_know() {
+        let storage = Storage::open_in_memory().unwrap();
+        let order = order(1.0, OrderSide::Buy, OrderStatus::Open, "0.001", "50000");
+        storage.upsert_orders(std::slice::from_ref(&order)).unwrap();
+
+        // a status Kraken may add: the order is still read
+        storage
+            .connection
+            .execute("UPDATE orders SET status = 'triggered'", [])
+            .unwrap();
+        assert_eq!(
+            storage.order(&order.txid).unwrap().unwrap().status,
+            OrderStatus::Unknown
+        );
+        // a side is buy or sell, nothing else
+        storage
+            .connection
+            .execute("UPDATE orders SET side = 'short'", [])
+            .unwrap();
+        assert!(matches!(
+            storage.order(&order.txid),
+            Err(StorageError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn fails_when_its_writes_are_refused() {
+        let storage = Storage::open_in_memory().unwrap();
+        storage.refuse_writes();
+        let order = order(1.0, OrderSide::Buy, OrderStatus::Open, "0.001", "50000");
+        assert!(storage.upsert_orders(&[order]).is_err());
+        assert!(storage.set_order_reference("OAAAAA", d("50000.1")).is_err());
+    }
 }
