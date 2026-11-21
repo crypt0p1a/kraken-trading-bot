@@ -9,6 +9,8 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+# the oldest Rust the workspace builds with, checked by the CI: rusqlite and uuid need 1.89
+rust-version = "1.89"
 license = "MIT"
 repository = "https://github.com/crypt0p1a/kraken-trading-bot"
 

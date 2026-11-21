@@ -16,6 +16,8 @@
   HTML and lcov reports as artifacts, at least 96% of the lines, nothing left out: the tests run
   the executables, the bot on a mocked Kraken (`KRAKEN_BOT_API_HOST`); sent to Codecov when the
   `CODECOV_TOKEN` secret is set
+- **msrv**: the workspace checked with the oldest Rust it supports, the `rust-version` of
+  `Cargo.toml`
 - **audit**: `cargo audit` of the dependencies
 - **screenshots**: the screens of the dashboard on the demo database (`scripts/screenshots.sh`), as
   an artifact: what a change looks like, to compare with `assets/screenshots`

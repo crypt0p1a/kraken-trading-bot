@@ -207,6 +207,21 @@ jobs:
       - name: Image size
         run: docker images kraken-trading-bot:ci --format '{{.Size}}' | tee -a "$GITHUB_STEP_SUMMARY"
 
+  # the oldest Rust the workspace builds with: the rust-version of Cargo.toml
+  msrv:
+    name: Minimum Rust version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: The rust-version of Cargo.toml
+        id: msrv
+        run: echo "version=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace --all-targets --locked
+
   audit:
     name: Vulnerabilities of the dependencies
     runs-on: ubuntu-latest
