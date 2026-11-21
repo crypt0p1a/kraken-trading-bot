@@ -1,7 +1,56 @@
-use super::{Result, Storage};
+use super::{Result, Storage, StorageError};
 use crate::market::Indicators;
 use rusqlite::{OptionalExtension, params};
 use rust_decimal::Decimal;
+
+/// What a manager decided, as the `kind` of the `actions` table: the dashboard reads these names
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActionKind {
+    /// An order placed, or validated in a dry run
+    Buy,
+    Sell,
+    /// Nothing done, for a reason
+    Idle,
+    /// Its buy cancelled, the price having risen too far above it
+    BuyCancelled,
+    /// A virtual manager added
+    VirtualCreated,
+    /// A virtual manager deleted, holding nothing
+    VirtualDeleted,
+    /// A virtual manager found again in the orders of Kraken
+    VirtualRebuilt,
+}
+
+impl ActionKind {
+    pub const ALL: [Self; 7] = [
+        Self::Buy,
+        Self::Sell,
+        Self::Idle,
+        Self::BuyCancelled,
+        Self::VirtualCreated,
+        Self::VirtualDeleted,
+        Self::VirtualRebuilt,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Buy => "buy",
+            Self::Sell => "sell",
+            Self::Idle => "idle",
+            Self::BuyCancelled => "buy_cancelled",
+            Self::VirtualCreated => "virtual_created",
+            Self::VirtualDeleted => "virtual_deleted",
+            Self::VirtualRebuilt => "virtual_rebuilt",
+        }
+    }
+
+    fn parse(text: &str) -> Result<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|it| it.name() == text)
+            .ok_or_else(|| StorageError::Invalid(format!("action kind {text}")))
+    }
+}
 
 /// A decision of a manager, and what came of it
 #[derive(Debug, Clone, PartialEq)]
@@ -9,8 +58,7 @@ pub struct ActionRecord {
     pub manager_id: i32,
     /// UTC milliseconds
     pub at: i64,
-    /// buy, sell or idle
-    pub kind: String,
+    pub kind: ActionKind,
     pub amount: Option<Decimal>,
     pub price: Option<Decimal>,
     pub reason: Option<String>,
@@ -20,6 +68,24 @@ pub struct ActionRecord {
     pub txid: Option<String>,
     /// Why the order couldn't be placed
     pub error: Option<String>,
+}
+
+impl ActionRecord {
+    /// An action without amount, price, reason, txid or error: what it has is set after it,
+    /// `ActionRecord { reason: Some(..), ..ActionRecord::new(..) }`
+    pub fn new(manager_id: i32, at: i64, kind: ActionKind, dry_run: bool) -> Self {
+        Self {
+            manager_id,
+            at,
+            kind,
+            amount: None,
+            price: None,
+            reason: None,
+            dry_run,
+            txid: None,
+            error: None,
+        }
+    }
 }
 
 /// The price of a pair at a tick
@@ -58,7 +124,7 @@ impl Storage {
             params![
                 action.manager_id,
                 action.at,
-                action.kind,
+                action.kind.name(),
                 action.amount.map(|it| it.to_string()),
                 action.price.map(|it| it.to_string()),
                 action.reason,
@@ -71,17 +137,22 @@ impl Storage {
         Ok(())
     }
 
-    /// The last actions of a manager, most recent first
     /// The bot cancelled the order itself: a buy the price left behind
     pub fn cancelled_by_the_bot(&self, txid: &str) -> Result<bool> {
         Ok(self.connection.query_row(
             "SELECT EXISTS (SELECT 1 FROM actions
-                WHERE account = ?1 AND txid = ?2 AND kind = 'buy_cancelled' AND error IS NULL)",
-            params![self.account, txid],
+                WHERE account = ?1 AND txid = ?2 AND kind = ?3 AND error IS NULL)",
+            params![self.account, txid, ActionKind::BuyCancelled.name()],
             |row| row.get(0),
         )?)
     }
 
+    /// The last action of a manager
+    pub fn last_action(&self, manager_id: i32) -> Result<Option<ActionRecord>> {
+        Ok(self.actions_of(manager_id, 1)?.into_iter().next())
+    }
+
+    /// The last actions of a manager, most recent first
     pub fn actions_of(&self, manager_id: i32, limit: usize) -> Result<Vec<ActionRecord>> {
         let mut statement = self.connection.prepare_cached(
             "SELECT manager_id, at, kind, amount, price, reason, dry_run, txid, error FROM actions
@@ -106,7 +177,7 @@ impl Storage {
             Ok(ActionRecord {
                 manager_id,
                 at,
-                kind,
+                kind: ActionKind::parse(&kind)?,
                 amount: super::optional_decimal(amount)?,
                 price: super::optional_decimal(price)?,
                 reason,
@@ -244,46 +315,67 @@ mod tests {
     use super::*;
     use crate::planner::tests::d;
 
-    fn action(at: i64, kind: &str) -> ActionRecord {
+    fn action(at: i64, kind: ActionKind) -> ActionRecord {
         ActionRecord {
-            manager_id: 1,
-            at,
-            kind: kind.into(),
             amount: Some(d("0.0006")),
             price: Some(d("49500")),
-            reason: None,
-            dry_run: true,
-            txid: None,
-            error: None,
+            ..ActionRecord::new(1, at, kind, true)
         }
     }
 
     #[test]
     fn records_the_actions_most_recent_first() {
         let storage = Storage::open_in_memory().unwrap();
-        storage.record_action(&action(1, "buy")).unwrap();
+        storage.record_action(&action(1, ActionKind::Buy)).unwrap();
         storage
             .record_action(&ActionRecord {
                 error: Some("EOrder:Insufficient funds".into()),
-                ..action(2, "sell")
+                ..action(2, ActionKind::Sell)
             })
             .unwrap();
         storage
             .record_action(&ActionRecord {
                 manager_id: 2,
-                ..action(3, "buy")
+                ..action(3, ActionKind::Buy)
             })
             .unwrap();
 
         let actions = storage.actions_of(1, 10).unwrap();
         assert_eq!(actions.len(), 2);
-        assert_eq!(actions[0].kind, "sell");
+        assert_eq!(actions[0].kind, ActionKind::Sell);
         assert_eq!(
             actions[0].error.as_deref(),
             Some("EOrder:Insufficient funds")
         );
-        assert_eq!(actions[1], action(1, "buy"));
+        assert_eq!(actions[1], action(1, ActionKind::Buy));
         assert_eq!(storage.actions_of(1, 1).unwrap().len(), 1);
+        assert_eq!(storage.last_action(1).unwrap(), Some(actions[0].clone()));
+        assert_eq!(storage.last_action(3).unwrap(), None);
+    }
+
+    #[test]
+    fn reads_back_every_kind_and_refuses_an_unknown_one() {
+        let storage = Storage::open_in_memory().unwrap();
+        for (at, kind) in ActionKind::ALL.into_iter().enumerate() {
+            storage.record_action(&action(at as i64, kind)).unwrap();
+        }
+        let kinds: Vec<ActionKind> = storage
+            .actions_of(1, 10)
+            .unwrap()
+            .into_iter()
+            .rev()
+            .map(|it| it.kind)
+            .collect();
+        assert_eq!(kinds, ActionKind::ALL);
+
+        storage
+            .connection
+            .execute("UPDATE actions SET kind = 'sold' WHERE kind = 'sell'", [])
+            .unwrap();
+        assert!(matches!(
+            storage.actions_of(1, 10),
+            Err(StorageError::Invalid(_))
+        ));
     }
 
     #[test]

@@ -3,12 +3,14 @@
 
 use kraken_dashboard::app::{App, Chart, Panel, Range, now_millis};
 use kraken_dashboard::data::Database;
+use kraken_dashboard::stats::moves;
 use kraken_spot_api::trading::{OrderSide, OrderStatus};
 use kraken_trading_bot::config::{ManagerConfig, ManagerMode};
 use kraken_trading_bot::ledger;
 use kraken_trading_bot::order::BotOrder;
 use kraken_trading_bot::storage::{
-    AccountRecord, ActionRecord, CommandState, FORCED_TICK, ManagerState, Storage, TickerRecord,
+    AccountRecord, ActionKind, ActionRecord, CommandState, FORCED_TICK, ManagerState, Storage,
+    TickerRecord,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -50,6 +52,7 @@ fn config(id: i32, pair: &str) -> ManagerConfig {
         buy_below: d("1"),
         sell_above: d("1.5"),
         mode: ManagerMode::Active,
+        holding: None,
     }
 }
 
@@ -171,10 +174,10 @@ fn write(path: &Path) -> Storage {
         }
     }
 
-    let action = |kind: &str, txid: Option<&str>, error: Option<&str>| ActionRecord {
+    let action = |kind: ActionKind, txid: Option<&str>, error: Option<&str>| ActionRecord {
         manager_id: 1,
         at: now - 60_000,
-        kind: kind.into(),
+        kind,
         amount: Some(d("0.0004")),
         price: Some(d("75500")),
         reason: Some("buys at -1%".into()),
@@ -199,12 +202,18 @@ fn write(path: &Path) -> Storage {
             holdings: d("22.83"),
         })
         .unwrap();
-    storage.record_action(&action("idle", None, None)).unwrap();
     storage
-        .record_action(&action("sell", None, Some("EOrder:Insufficient funds")))
+        .record_action(&action(ActionKind::Idle, None, None))
         .unwrap();
     storage
-        .record_action(&action("buy", Some("O3"), None))
+        .record_action(&action(
+            ActionKind::Sell,
+            None,
+            Some("EOrder:Insufficient funds"),
+        ))
+        .unwrap();
+    storage
+        .record_action(&action(ActionKind::Buy, Some("O3"), None))
         .unwrap();
     storage
 }
@@ -354,6 +363,9 @@ fn draws_the_desk() {
     assert!(scenarios.contains("IF THE MARKET MOVES"), "{scenarios}");
     assert!(scenarios.contains("NOW"), "{scenarios}");
     assert!(scenarios.contains("-10%"), "{scenarios}");
+    // taller: as many moves as the height holds
+    let tall = screen(&app, 180, 90);
+    assert!(tall.contains("-20%") && tall.contains("+15%"), "{tall}");
     app.charts[0] = Chart::Portfolio;
     let portfolio = screen(&app, 180, 48);
     assert!(portfolio.contains("PORTFOLIO · USD"), "{portfolio}");
@@ -378,7 +390,7 @@ fn plays_the_moves_of_the_market_on_the_portfolio() {
     let (app, _database) = app(&fixture.path);
     let model = &app.model;
     let account = model.account("USD");
-    let scenarios = model.scenarios(&[1, 2], account);
+    let scenarios = model.scenarios(&[1, 2], account, &moves(7));
     let at = |moved: i32| scenarios.iter().find(|it| it.moved == moved).unwrap();
 
     // no move: the portfolio as it is, nothing filled
@@ -465,7 +477,7 @@ fn a_move_up_sells_at_the_target_and_moves_what_no_manager_owns() {
     let model = &app.model;
     let manager = model.manager(1).unwrap();
     assert_eq!(manager.position_cost, d("28.112"));
-    let scenarios = model.scenarios(&[1], model.account("USD"));
+    let scenarios = model.scenarios(&[1], model.account("USD"), &moves(7));
     let at = |moved: i32| scenarios.iter().find(|it| it.moved == moved).unwrap();
 
     assert_eq!(at(0).value, d("149.888"));
@@ -564,7 +576,7 @@ fn sees_when_the_bot_writes() {
         .record_action(&ActionRecord {
             manager_id: 1,
             at: now_millis(),
-            kind: "idle".into(),
+            kind: ActionKind::Idle,
             amount: None,
             price: None,
             reason: None,
@@ -1165,10 +1177,10 @@ fn tells_every_decision_of_the_tape() {
     let fixture = path("tape");
     let storage = write(&fixture.path);
     let now = now_millis();
-    let action = |kind: &str, reason: &str, error: Option<&str>| ActionRecord {
+    let action = |kind: ActionKind, reason: &str, error: Option<&str>| ActionRecord {
         manager_id: 1,
         at: now - 30_000,
-        kind: kind.into(),
+        kind,
         amount: None,
         price: None,
         reason: Some(reason.into()),
@@ -1177,15 +1189,23 @@ fn tells_every_decision_of_the_tape() {
         error: error.map(Into::into),
     };
     for record in [
-        action("buy_cancelled", "the price rose 0.6%", None),
-        action("buy_cancelled", "", Some("EOrder:Unknown order")),
-        action("virtual_created", "money no manager uses", None),
-        action("virtual_deleted", "starved 3 ticks", None),
-        // a kind the dashboard doesn't know: its name, in the 5 columns of the kind
-        action("audit", "", Some("EService:Unavailable")),
+        action(ActionKind::BuyCancelled, "the price rose 0.6%", None),
+        action(ActionKind::BuyCancelled, "", Some("EOrder:Unknown order")),
+        action(ActionKind::VirtualCreated, "money no manager uses", None),
+        action(ActionKind::VirtualDeleted, "starved 3 ticks", None),
+        action(ActionKind::Idle, "", Some("EService:Unavailable")),
     ] {
         storage.record_action(&record).unwrap();
     }
+    // a kind the dashboard doesn't know, which the bot can't write: its name, in the 5 columns of
+    // the kind
+    rusqlite::Connection::open(&fixture.path)
+        .unwrap()
+        .execute(
+            "UPDATE actions SET kind = 'audit' WHERE error = 'EService:Unavailable'",
+            [],
+        )
+        .unwrap();
     let (mut app, database) = app(&fixture.path);
 
     let text = screen(&app, 220, 60);

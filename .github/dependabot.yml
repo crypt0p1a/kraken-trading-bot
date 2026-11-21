@@ -1,0 +1,31 @@
+# The updates of the dependencies, once a week: a pull request per ecosystem, its updates grouped,
+# which the CI checks like any other (tests, MSRV, cargo deny, Docker image)
+version: 2
+updates:
+  # the crates of the workspace, Cargo.toml and Cargo.lock
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      crates:
+        patterns: ["*"]
+    open-pull-requests-limit: 5
+
+  # the actions of .github/workflows
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # the base images of the Dockerfile (rust, distroless)
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      images:
+        patterns: ["*"]

@@ -16,13 +16,20 @@
   HTML and lcov reports as artifacts, at least 96% of the lines, nothing left out: the tests run
   the executables, the bot on a mocked Kraken (`KRAKEN_BOT_API_HOST`); sent to Codecov when the
   `CODECOV_TOKEN` secret is set
-- **audit**: `cargo audit` of the dependencies
+- **msrv**: the workspace checked with the oldest Rust it supports, the `rust-version` of
+  `Cargo.toml`
+- **deny**: [cargo deny](https://github.com/EmbarkStudios/cargo-deny) with
+  [`deny.toml`](../deny.toml): the vulnerabilities of the RustSec database, the licenses
+  (permissive only), the bans and the sources (crates.io only) of the dependencies
 - **screenshots**: the screens of the dashboard on the demo database (`scripts/screenshots.sh`), as
   an artifact: what a change looks like, to compare with `assets/screenshots`
 - **docker**: the image of the bot on amd64 and arm64. It must refuse to start without
   credentials, and `--check` must validate the pairs of `managers.example.yaml` on Kraken before
   Kraken refuses its fake key. The cache mounts of the Dockerfile (cargo registry and target) and
   its layers are kept in the cache of GitHub between the runs
+
+[Dependabot](../.github/dependabot.yml) opens a pull request a week per ecosystem, its updates
+grouped: the crates, the actions of the workflows and the base images of the Dockerfile.
 
 The runs of a pull request are cancelled by a new push to it; the runs of `main` always go to the
 end, to save the caches the pull requests start from.

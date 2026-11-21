@@ -42,6 +42,10 @@ pub struct ManagerConfig {
     pub sell_above: Decimal,
     #[serde(default)]
     pub mode: ManagerMode,
+    /// Only for a virtual manager: the base it starts with instead of its budget, as bought with
+    /// all of it. The crypto of the account no manager held, valued at the price of the market
+    #[serde(skip)]
+    pub holding: Option<Decimal>,
 }
 
 /// The YAML configuration of the bot
@@ -67,6 +71,11 @@ pub struct BotConfig {
     /// true: the bot adds managers when the account has money no manager uses. false by default
     #[serde(default)]
     pub virtual_managers: bool,
+    /// true: the bot also adds managers when the account has crypto no manager holds, which sell
+    /// it as if it had just been bought at the price of the market. Needs `virtual_managers`.
+    /// false by default: the crypto of the account is left alone
+    #[serde(default)]
+    pub sell_free_base: bool,
     pub managers: Vec<ManagerConfig>,
 }
 
@@ -226,6 +235,10 @@ impl BotConfig {
                     "notifications: the ntfy server must be an http(s) URL, got {server}"
                 ));
             }
+        }
+
+        if self.sell_free_base && !self.virtual_managers {
+            return invalid("sell_free_base needs virtual_managers: true".into());
         }
 
         let mut ids = HashSet::new();
@@ -487,6 +500,24 @@ managers: [{id: 999, pair: XBTUSD, budget: 30, buy_below: 1, sell_above: 1.5}]",
         );
         assert!(!BotConfig::parse("managers: []").unwrap().virtual_managers);
         assert_eq!(FALLBACK_SELL_ABOVE, Decimal::new(15, 1));
+    }
+
+    #[test]
+    fn sells_the_free_crypto_only_when_asked() {
+        assert!(!BotConfig::parse("managers: []").unwrap().sell_free_base);
+        let config = BotConfig::parse("virtual_managers: true\nsell_free_base: true\nmanagers: []");
+        assert!(config.unwrap().sell_free_base);
+        let error = BotConfig::parse("sell_free_base: true\nmanagers: []")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("needs virtual_managers"), "{error}");
+        // the crypto a manager of the file starts with isn't read from the file
+        assert!(
+            BotConfig::parse(
+                "managers: [{id: 1, pair: XBTUSD, budget: 30, buy_below: 1, sell_above: 1.5, holding: 1}]"
+            )
+            .is_err()
+        );
     }
 
     #[test]

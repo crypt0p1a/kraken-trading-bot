@@ -5,7 +5,7 @@ use kraken_spot_api::trading::{OrderSide, OrderStatus};
 use kraken_trading_bot::bot::{Bot, Outcome};
 use kraken_trading_bot::config::BotConfig;
 use kraken_trading_bot::exchange::SimulatedExchange;
-use kraken_trading_bot::storage::Storage;
+use kraken_trading_bot::storage::{ActionKind, Storage};
 use rust_decimal::Decimal;
 use std::str::FromStr;
 
@@ -98,7 +98,7 @@ async fn a_dry_run_never_places_an_order() {
     assert!(
         actions
             .iter()
-            .all(|it| it.dry_run && it.txid.is_none() && it.kind == "buy")
+            .all(|it| it.dry_run && it.txid.is_none() && it.kind == ActionKind::Buy)
     );
 }
 
@@ -226,7 +226,7 @@ async fn a_closing_manager_sells_what_it_holds_then_stops() {
         .actions_of(1, 10)
         .unwrap()
         .into_iter()
-        .filter(|it| it.kind == "idle")
+        .filter(|it| it.kind == ActionKind::Idle)
         .count();
     assert_eq!(idle, 1);
 }
@@ -358,7 +358,7 @@ async fn an_order_refused_by_kraken_is_recorded_and_the_others_go_on() {
     );
     assert_eq!(report.outcomes[&2], Outcome::Waited);
     let last = &bot.storage().actions_of(1, 1).unwrap()[0];
-    assert_eq!(last.kind, "sell");
+    assert_eq!(last.kind, ActionKind::Sell);
     assert!(
         last.error
             .as_deref()
