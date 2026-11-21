@@ -47,6 +47,8 @@ struct State {
     closed_orders_error: Option<String>,
     /// The error every read of the permissions answers, when set: a refused key
     key_error: Option<String>,
+    /// The order filled right after the next read of the closed orders, when set
+    fill_after_closed_orders: Option<String>,
 }
 
 fn error(body: &str) -> KrakenError {
@@ -77,6 +79,7 @@ impl SimulatedExchange {
                     .to_vec(),
                 closed_orders_error: None,
                 key_error: None,
+                fill_after_closed_orders: None,
             }),
         }
     }
@@ -278,6 +281,12 @@ impl SimulatedExchange {
     /// Kraken refuses the key with this error, none when None
     pub fn refuse_key(&self, error: Option<&str>) {
         self.state().key_error = error.map(str::to_string);
+    }
+
+    /// Fills the order right after the next read of the closed orders, which didn't have it: a
+    /// fill once the bot has read its orders
+    pub fn fill_after_the_closed_orders(&self, txid: &str) {
+        self.state().fill_after_closed_orders = Some(txid.to_string());
     }
 
     pub fn add_order_calls(&self) -> usize {
@@ -592,7 +601,8 @@ impl Exchange for SimulatedExchange {
         if let Some(body) = &self.state().closed_orders_error {
             return Err(error(body));
         }
-        let state = self.state();
+        let mut state = self.state();
+        let fill = state.fill_after_closed_orders.take();
         let mut matching: Vec<Order> = state
             .orders
             .iter()
@@ -615,6 +625,10 @@ impl Exchange for SimulatedExchange {
         matching.sort_by(|a, b| b.open_time.total_cmp(&a.open_time));
         let count = matching.len() as i64;
         let offset = request.offset.unwrap_or_default().max(0) as usize;
+        drop(state);
+        if let Some(txid) = fill {
+            self.fill(&txid, None);
+        }
         Ok(ClosedOrders {
             orders: matching.into_iter().skip(offset).take(50).collect(),
             count,
