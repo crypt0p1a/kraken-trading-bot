@@ -3,6 +3,7 @@
 
 use kraken_dashboard::app::{App, Chart, Panel, Range, now_millis};
 use kraken_dashboard::data::Database;
+use kraken_dashboard::stats::moves;
 use kraken_spot_api::trading::{OrderSide, OrderStatus};
 use kraken_trading_bot::config::{ManagerConfig, ManagerMode};
 use kraken_trading_bot::ledger;
@@ -362,6 +363,9 @@ fn draws_the_desk() {
     assert!(scenarios.contains("IF THE MARKET MOVES"), "{scenarios}");
     assert!(scenarios.contains("NOW"), "{scenarios}");
     assert!(scenarios.contains("-10%"), "{scenarios}");
+    // taller: as many moves as the height holds
+    let tall = screen(&app, 180, 90);
+    assert!(tall.contains("-20%") && tall.contains("+15%"), "{tall}");
     app.charts[0] = Chart::Portfolio;
     let portfolio = screen(&app, 180, 48);
     assert!(portfolio.contains("PORTFOLIO · USD"), "{portfolio}");
@@ -386,7 +390,7 @@ fn plays_the_moves_of_the_market_on_the_portfolio() {
     let (app, _database) = app(&fixture.path);
     let model = &app.model;
     let account = model.account("USD");
-    let scenarios = model.scenarios(&[1, 2], account);
+    let scenarios = model.scenarios(&[1, 2], account, &moves(7));
     let at = |moved: i32| scenarios.iter().find(|it| it.moved == moved).unwrap();
 
     // no move: the portfolio as it is, nothing filled
@@ -473,7 +477,7 @@ fn a_move_up_sells_at_the_target_and_moves_what_no_manager_owns() {
     let model = &app.model;
     let manager = model.manager(1).unwrap();
     assert_eq!(manager.position_cost, d("28.112"));
-    let scenarios = model.scenarios(&[1], model.account("USD"));
+    let scenarios = model.scenarios(&[1], model.account("USD"), &moves(7));
     let at = |moved: i32| scenarios.iter().find(|it| it.moved == moved).unwrap();
 
     assert_eq!(at(0).value, d("149.888"));

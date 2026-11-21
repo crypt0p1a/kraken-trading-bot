@@ -225,8 +225,25 @@ pub fn growth(pnl: &[(f64, f64)], capital: &[(f64, f64)], budget: f64, period: i
         .collect()
 }
 
-/// The moves of the market the scenarios look at, in %
-pub const MOVES: [i32; 7] = [-10, -5, -2, 0, 2, 5, 10];
+/// The moves of the market up and down, in %, the first ones first: the more rows, the more moves
+const STEPS: [i32; 17] = [2, 5, 10, 1, 3, 20, 15, 7, 4, 30, 25, 50, 40, 75, 60, 90, 12];
+
+/// The moves of the market for as many rows as given, in %: no move, then as many up as down,
+/// lowest first
+pub fn moves(rows: usize) -> Vec<i32> {
+    let mut up: Vec<i32> = STEPS
+        .iter()
+        .take(rows.saturating_sub(1) / 2)
+        .copied()
+        .collect();
+    up.sort_unstable();
+    up.iter()
+        .rev()
+        .map(|it| -it)
+        .chain([0])
+        .chain(up.iter().copied())
+        .collect()
+}
 
 /// What the portfolio would be worth if every price moved at once by a percentage
 #[derive(Debug, Clone, PartialEq)]
@@ -426,7 +443,12 @@ impl Model {
     /// The portfolio of these managers, and of the account when given, for each move of the market.
     /// One move at once, from the last prices: what the bot would place next isn't played. A cash
     /// no manager owns stays as it is, a base no manager owns moves with the market
-    pub fn scenarios(&self, ids: &[ManagerKey], account: Option<&Account>) -> Vec<Scenario> {
+    pub fn scenarios(
+        &self,
+        ids: &[ManagerKey],
+        account: Option<&Account>,
+        moves: &[i32],
+    ) -> Vec<Scenario> {
         let totals = self.totals_of(ids);
         let (rest, held_outside) = account.map_or((Decimal::ZERO, Decimal::ZERO), |it| {
             (
@@ -434,7 +456,7 @@ impl Model {
                 (it.holdings - totals.exposure).max(Decimal::ZERO),
             )
         });
-        MOVES
+        moves
             .iter()
             .map(|moved| {
                 let move_ = Decimal::from(*moved) / Decimal::ONE_HUNDRED;
@@ -770,6 +792,16 @@ mod tests {
 
     fn at(hours: f64) -> f64 {
         hours * HOUR as f64
+    }
+
+    #[test]
+    fn as_many_moves_as_rows() {
+        assert_eq!(moves(0), [0]);
+        assert_eq!(moves(7), [-10, -5, -2, 0, 2, 5, 10]);
+        assert_eq!(moves(8), [-10, -5, -2, 0, 2, 5, 10]);
+        assert_eq!(moves(9), [-10, -5, -2, -1, 0, 1, 2, 5, 10]);
+        assert_eq!(moves(100).len(), 35);
+        assert_eq!(moves(100).first(), Some(&-90));
     }
 
     #[test]

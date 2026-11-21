@@ -6,7 +6,7 @@ use super::{panel, title};
 use crate::app::{App, Chart};
 use crate::data::{Side, percent, to_f64};
 use crate::format;
-use crate::stats::{Tile, canonical};
+use crate::stats::{Tile, canonical, moves};
 use crate::theme::{self, AMBER, CYAN, DOWN, FAINT, GOLD, UP};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
@@ -242,7 +242,10 @@ fn render_scenarios(frame: &mut Frame, app: &App, area: Rect) {
         .is_none()
         .then(|| app.model.account(&totals.quote))
         .flatten();
-    let scenarios = app.model.scenarios(&ids, account);
+    // as many moves as the height holds: the header, a blank line and the 3 lines of the note aside
+    const NOTE: u16 = 3;
+    let rows = block.inner(area).height.saturating_sub(1 + 1 + NOTE);
+    let scenarios = app.model.scenarios(&ids, account, &moves(rows as usize));
     let now = scenarios
         .iter()
         .find(|it| it.moved == 0)
@@ -315,7 +318,11 @@ fn render_scenarios(frame: &mut Frame, app: &App, area: Rect) {
     ]);
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    let [table, note] = Layout::vertical([Constraint::Length(9), Constraint::Fill(1)]).areas(inner);
+    let [table, note] = Layout::vertical([
+        Constraint::Length(scenarios.len() as u16 + 2),
+        Constraint::Fill(1),
+    ])
+    .areas(inner);
     frame.render_widget(
         Table::new(
             rows,
