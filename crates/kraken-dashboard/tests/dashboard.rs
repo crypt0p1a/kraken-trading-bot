@@ -8,7 +8,8 @@ use kraken_trading_bot::config::{ManagerConfig, ManagerMode};
 use kraken_trading_bot::ledger;
 use kraken_trading_bot::order::BotOrder;
 use kraken_trading_bot::storage::{
-    AccountRecord, ActionRecord, CommandState, FORCED_TICK, ManagerState, Storage, TickerRecord,
+    AccountRecord, ActionKind, ActionRecord, CommandState, FORCED_TICK, ManagerState, Storage,
+    TickerRecord,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -172,10 +173,10 @@ fn write(path: &Path) -> Storage {
         }
     }
 
-    let action = |kind: &str, txid: Option<&str>, error: Option<&str>| ActionRecord {
+    let action = |kind: ActionKind, txid: Option<&str>, error: Option<&str>| ActionRecord {
         manager_id: 1,
         at: now - 60_000,
-        kind: kind.into(),
+        kind,
         amount: Some(d("0.0004")),
         price: Some(d("75500")),
         reason: Some("buys at -1%".into()),
@@ -200,12 +201,18 @@ fn write(path: &Path) -> Storage {
             holdings: d("22.83"),
         })
         .unwrap();
-    storage.record_action(&action("idle", None, None)).unwrap();
     storage
-        .record_action(&action("sell", None, Some("EOrder:Insufficient funds")))
+        .record_action(&action(ActionKind::Idle, None, None))
         .unwrap();
     storage
-        .record_action(&action("buy", Some("O3"), None))
+        .record_action(&action(
+            ActionKind::Sell,
+            None,
+            Some("EOrder:Insufficient funds"),
+        ))
+        .unwrap();
+    storage
+        .record_action(&action(ActionKind::Buy, Some("O3"), None))
         .unwrap();
     storage
 }
@@ -565,7 +572,7 @@ fn sees_when_the_bot_writes() {
         .record_action(&ActionRecord {
             manager_id: 1,
             at: now_millis(),
-            kind: "idle".into(),
+            kind: ActionKind::Idle,
             amount: None,
             price: None,
             reason: None,
@@ -1166,10 +1173,10 @@ fn tells_every_decision_of_the_tape() {
     let fixture = path("tape");
     let storage = write(&fixture.path);
     let now = now_millis();
-    let action = |kind: &str, reason: &str, error: Option<&str>| ActionRecord {
+    let action = |kind: ActionKind, reason: &str, error: Option<&str>| ActionRecord {
         manager_id: 1,
         at: now - 30_000,
-        kind: kind.into(),
+        kind,
         amount: None,
         price: None,
         reason: Some(reason.into()),
@@ -1178,15 +1185,23 @@ fn tells_every_decision_of_the_tape() {
         error: error.map(Into::into),
     };
     for record in [
-        action("buy_cancelled", "the price rose 0.6%", None),
-        action("buy_cancelled", "", Some("EOrder:Unknown order")),
-        action("virtual_created", "money no manager uses", None),
-        action("virtual_deleted", "starved 3 ticks", None),
-        // a kind the dashboard doesn't know: its name, in the 5 columns of the kind
-        action("audit", "", Some("EService:Unavailable")),
+        action(ActionKind::BuyCancelled, "the price rose 0.6%", None),
+        action(ActionKind::BuyCancelled, "", Some("EOrder:Unknown order")),
+        action(ActionKind::VirtualCreated, "money no manager uses", None),
+        action(ActionKind::VirtualDeleted, "starved 3 ticks", None),
+        action(ActionKind::Idle, "", Some("EService:Unavailable")),
     ] {
         storage.record_action(&record).unwrap();
     }
+    // a kind the dashboard doesn't know, which the bot can't write: its name, in the 5 columns of
+    // the kind
+    rusqlite::Connection::open(&fixture.path)
+        .unwrap()
+        .execute(
+            "UPDATE actions SET kind = 'audit' WHERE error = 'EService:Unavailable'",
+            [],
+        )
+        .unwrap();
     let (mut app, database) = app(&fixture.path);
 
     let text = screen(&app, 220, 60);

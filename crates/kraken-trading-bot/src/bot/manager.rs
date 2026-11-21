@@ -8,7 +8,7 @@ use crate::config::{ManagerConfig, ManagerMode};
 use crate::exchange::Exchange;
 use crate::ledger;
 use crate::order::BotOrder;
-use crate::storage::{ActionRecord, ManagerState};
+use crate::storage::{ActionKind, ActionRecord, ManagerState};
 use crate::strategy::{self, Action, Decision};
 use kraken_spot_api::trading::OrderSide;
 use rust_decimal::Decimal;
@@ -134,12 +134,12 @@ impl<E: Exchange> Bot<E> {
         let last = self.storage.actions_of(manager.id, 1)?;
         let repeated = last
             .first()
-            .is_some_and(|it| it.kind == "idle" && it.reason.as_deref() == Some(&reason));
+            .is_some_and(|it| it.kind == ActionKind::Idle && it.reason.as_deref() == Some(&reason));
         if !repeated {
             self.storage.record_action(&ActionRecord {
                 manager_id: manager.id,
                 at: now_millis(),
-                kind: "idle".into(),
+                kind: ActionKind::Idle,
                 amount: None,
                 price: None,
                 reason: Some(reason.clone()),

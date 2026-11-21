@@ -5,7 +5,7 @@ use kraken_spot_api::trading::{OrderSide, OrderStatus};
 use kraken_trading_bot::bot::{Bot, Outcome};
 use kraken_trading_bot::config::BotConfig;
 use kraken_trading_bot::exchange::SimulatedExchange;
-use kraken_trading_bot::storage::Storage;
+use kraken_trading_bot::storage::{ActionKind, Storage};
 use rust_decimal::Decimal;
 use std::str::FromStr;
 
@@ -78,7 +78,7 @@ async fn places_the_buy_again_once_the_price_left_it_behind() {
     assert!(matches!(outcome, Outcome::Cancelled(_)), "{outcome:?}");
     assert_eq!(open_orders(&bot), 0);
     let action = &bot.storage().actions_of(1, 1).unwrap()[0];
-    assert_eq!(action.kind, "buy_cancelled");
+    assert_eq!(action.kind, ActionKind::BuyCancelled);
 
     // placed again at -1% of the new price
     assert_eq!(buy_price(&tick(&mut bot).await), d("49797"));
@@ -171,7 +171,7 @@ async fn a_cancellation_refused_is_a_failure_recorded_once() {
         .actions_of(1, 10)
         .unwrap()
         .into_iter()
-        .filter(|it| it.kind == "buy_cancelled")
+        .filter(|it| it.kind == ActionKind::BuyCancelled)
         .collect();
     assert_eq!(cancellations.len(), 1);
     assert!(
@@ -201,7 +201,7 @@ async fn a_buy_gone_meanwhile_is_waited_for() {
             .actions_of(1, 10)
             .unwrap()
             .iter()
-            .all(|it| it.kind != "buy_cancelled")
+            .all(|it| it.kind != ActionKind::BuyCancelled)
     );
 }
 

@@ -10,7 +10,7 @@ use crate::exchange::Exchange;
 use crate::ledger;
 use crate::planner;
 use crate::rebuild;
-use crate::storage::{ActionRecord, VirtualManager};
+use crate::storage::{ActionKind, ActionRecord, VirtualManager};
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 
@@ -227,7 +227,7 @@ impl<E: Exchange> Bot<E> {
         self.storage.record_action(&ActionRecord {
             manager_id: config.id,
             at,
-            kind: "virtual_created".into(),
+            kind: ActionKind::VirtualCreated,
             amount: Some(config.budget),
             price: None,
             reason: Some(reason.clone()),
@@ -342,7 +342,7 @@ impl<E: Exchange> Bot<E> {
         self.storage.record_action(&ActionRecord {
             manager_id: manager.id,
             at,
-            kind: "virtual_deleted".into(),
+            kind: ActionKind::VirtualDeleted,
             amount: None,
             price: None,
             reason: Some(reason.clone()),

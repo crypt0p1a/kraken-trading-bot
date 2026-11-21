@@ -12,7 +12,7 @@ use kraken_trading_bot::ledger;
 use kraken_trading_bot::market::Indicators;
 use kraken_trading_bot::order::BotOrder;
 use kraken_trading_bot::storage::{
-    AccountRecord, ActionRecord, ManagerState, Storage, TickerRecord, VirtualManager,
+    AccountRecord, ActionKind, ActionRecord, ManagerState, Storage, TickerRecord, VirtualManager,
 };
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive, ToPrimitive};
@@ -95,7 +95,7 @@ fn add_copy(storage: &Storage, copy: &Manager, template: i32, at: i64, reason: &
         .record_action(&ActionRecord {
             manager_id: copy.config.id,
             at,
-            kind: "virtual_created".into(),
+            kind: ActionKind::VirtualCreated,
             amount: Some(copy.config.budget),
             price: None,
             reason: Some(reason.into()),
@@ -260,7 +260,7 @@ fn main() {
                 .find(|it| it.altname == manager.config.pair.replace('/', ""))
                 .unwrap();
             let price = pair.price;
-            let record = |kind: &str,
+            let record = |kind: ActionKind,
                           amount: Option<Decimal>,
                           price: Option<Decimal>,
                           reason: String,
@@ -270,7 +270,7 @@ fn main() {
                     .record_action(&ActionRecord {
                         manager_id: manager.config.id,
                         at,
-                        kind: kind.into(),
+                        kind,
                         amount,
                         price,
                         reason: Some(reason),
@@ -316,7 +316,7 @@ fn main() {
                         order.close_time = Some(seconds);
                         changed.push(order.clone());
                         record(
-                            "buy_cancelled",
+                            ActionKind::BuyCancelled,
                             None,
                             None,
                             format!(
@@ -348,7 +348,14 @@ fn main() {
 
             if manager.orders.iter().any(|it| !it.is_final()) {
                 if fastrand::f64() < 0.15 {
-                    record("idle", None, None, "an order is open".into(), None, None);
+                    record(
+                        ActionKind::Idle,
+                        None,
+                        None,
+                        "an order is open".into(),
+                        None,
+                        None,
+                    );
                 }
                 continue;
             }
@@ -380,9 +387,9 @@ fn main() {
             };
             let limit = decimal(limit, pair.decimals);
             let kind = if side == OrderSide::Buy {
-                "buy"
+                ActionKind::Buy
             } else {
-                "sell"
+                ActionKind::Sell
             };
 
             // now and then, Kraken refuses an order

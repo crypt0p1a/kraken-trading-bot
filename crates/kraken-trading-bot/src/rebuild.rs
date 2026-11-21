@@ -22,7 +22,7 @@ use crate::exchange::Exchange;
 use crate::ledger;
 use crate::order::BotOrder;
 use crate::pair::PairRules;
-use crate::storage::{ActionRecord, Storage, VirtualManager};
+use crate::storage::{ActionKind, ActionRecord, Storage, VirtualManager};
 use crate::sync;
 use crate::{BotError, BotResult};
 use kraken_spot_api::trading::{ClosedOrdersRequest, OrderSide};
@@ -336,7 +336,7 @@ async fn rebuild_id<E: Exchange>(
     storage.record_action(&ActionRecord {
         manager_id: id,
         at: now_ms,
-        kind: "virtual_rebuilt".into(),
+        kind: ActionKind::VirtualRebuilt,
         amount: Some(manager.budget),
         price: None,
         reason: Some(reason.clone()),

@@ -5,7 +5,7 @@ use kraken_spot_api::trading::{OrderSide, OrderStatus};
 use kraken_trading_bot::bot::{Bot, Outcome};
 use kraken_trading_bot::config::{BotConfig, ManagerConfig, VirtualId};
 use kraken_trading_bot::exchange::SimulatedExchange;
-use kraken_trading_bot::storage::Storage;
+use kraken_trading_bot::storage::{ActionKind, Storage};
 use rust_decimal::Decimal;
 use std::str::FromStr;
 
@@ -241,7 +241,7 @@ async fn deletes_a_virtual_manager_the_account_cannot_pay_for_anymore() {
     assert_eq!(bot.storage().last_virtual_id().unwrap(), Some(VIRTUAL));
     assert_eq!(bot.storage().manager_balances(VIRTUAL).unwrap(), None);
     let actions = bot.storage().actions_of(VIRTUAL, 1).unwrap();
-    assert_eq!(actions[0].kind, "virtual_deleted");
+    assert_eq!(actions[0].kind, ActionKind::VirtualDeleted);
 
     // gone, and not added again: no money is left for anybody
     for _ in 0..3 {
@@ -349,7 +349,7 @@ async fn rebuilds_a_virtual_manager_lost_with_the_database() {
     assert_eq!(report.outcomes[&VIRTUAL], Outcome::Waited);
     assert_eq!(bot.storage().orders_of(VIRTUAL).unwrap().len(), 2);
     let actions = bot.storage().actions_of(VIRTUAL, 1).unwrap();
-    assert_eq!(actions[0].kind, "virtual_rebuilt");
+    assert_eq!(actions[0].kind, ActionKind::VirtualRebuilt);
 }
 
 #[tokio::test]

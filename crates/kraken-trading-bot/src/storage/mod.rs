@@ -28,7 +28,7 @@ mod orders;
 mod virtuals;
 
 pub use commands::{CommandState, FORCED_TICK};
-pub use journal::{AccountRecord, ActionRecord, TickerRecord};
+pub use journal::{AccountRecord, ActionKind, ActionRecord, TickerRecord};
 pub use managers::ManagerState;
 pub use virtuals::VirtualManager;
 

@@ -8,7 +8,7 @@ use crate::config::ManagerConfig;
 use crate::decimal::percent;
 use crate::exchange::Exchange;
 use crate::order::BotOrder;
-use crate::storage::ActionRecord;
+use crate::storage::{ActionKind, ActionRecord};
 use kraken_spot_api::trading::OrderSide;
 use rust_decimal::Decimal;
 
@@ -60,7 +60,7 @@ impl<E: Exchange> Bot<E> {
         let mut record = ActionRecord {
             manager_id: manager.id,
             at: now_millis(),
-            kind: "buy_cancelled".into(),
+            kind: ActionKind::BuyCancelled,
             amount: Some(order.volume),
             price: Some(limit),
             reason: Some(reason.clone()),

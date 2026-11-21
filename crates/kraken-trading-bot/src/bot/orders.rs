@@ -8,7 +8,7 @@ use crate::exchange::Exchange;
 use crate::ledger::Balances;
 use crate::notify;
 use crate::order::BotOrder;
-use crate::storage::ActionRecord;
+use crate::storage::{ActionKind, ActionRecord};
 use crate::{BotError, BotResult};
 use kraken_spot_api::trading::{
     NewOrder, OrderFlag, OrderSide, OrderStatus, OrderType, TimeInForce,
@@ -72,13 +72,13 @@ impl<E: Exchange> Bot<E> {
         tracing::info!(manager = manager.id, ?side, %amount, %price, dry_run, "placing an order");
 
         let kind = match side {
-            OrderSide::Buy => "buy",
-            OrderSide::Sell => "sell",
+            OrderSide::Buy => ActionKind::Buy,
+            OrderSide::Sell => ActionKind::Sell,
         };
         let mut record = ActionRecord {
             manager_id: manager.id,
             at: now_millis(),
-            kind: kind.into(),
+            kind,
             amount: Some(amount),
             price: Some(price),
             reason: Some(reason),
