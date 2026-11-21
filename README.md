@@ -2,6 +2,12 @@
 
 > A trading bot on Kraken Spot, its terminal dashboard and its notifications on the phone
 
+[![CI](https://github.com/crypt0p1a/kraken-trading-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/crypt0p1a/kraken-trading-bot/actions/workflows/ci.yml)
+[![🦀 Rust 1.89+](https://img.shields.io/badge/%F0%9F%A6%80_Rust-1.89%2B-DEA584)](Cargo.toml)
+[![📄 License: MIT](https://img.shields.io/badge/%F0%9F%93%84_license-MIT-blue)](LICENSE)
+[![🐙 Kraken: join with my invite](https://img.shields.io/badge/%F0%9F%90%99_Kraken-join_with_my_invite-5741D9)](https://invite.kraken.com/JDNW/iuba05c7)
+[![💼 LinkedIn: Kevin Le Perf](https://img.shields.io/badge/%F0%9F%92%BC_LinkedIn-Kevin_Le_Perf-0A66C2)](https://www.linkedin.com/in/kevin-le-perf)
+
 Each **manager** trades its own budget on one pair, with limit orders only: it buys below the
 market, then sells for what it cost plus a margin, fees included, and starts again with what the
 sale brought. Several managers share an account, several Kraken accounts run the same managers,
@@ -13,6 +19,9 @@ client of [kraken-rust](https://github.com/crypt0p1a/kraken-rust), from crates.i
 ![The dashboard: the key figures, the managers, the orders, the markets and the tape](assets/screenshots/desk.svg)
 
 ## Quick start
+
+It needs a Kraken account and an API key of it. No account yet? The 🐙 Kraken badge above is
+[my invitation link](https://invite.kraken.com/JDNW/iuba05c7), a referral link.
 
 ```sh
 cp managers.example.yaml managers.yaml   # the managers: a dry run until dry_run: false
@@ -96,6 +105,12 @@ scanners and the Docker image.
 
 The bot started in [kraken-rust](https://github.com/crypt0p1a/kraken-rust), next to the Kraken
 client. Its commits were moved here one by one, with their messages, authors and dates.
+
+## Author
+
+Kevin Le Perf
+
+[![💼 LinkedIn: Kevin Le Perf](https://img.shields.io/badge/%F0%9F%92%BC_LinkedIn-Kevin_Le_Perf-0A66C2)](https://www.linkedin.com/in/kevin-le-perf)
 
 ## License
 
