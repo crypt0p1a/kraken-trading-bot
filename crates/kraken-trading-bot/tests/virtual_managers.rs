@@ -902,3 +902,39 @@ async fn rebuilds_a_copy_which_started_with_the_crypto_of_the_account() {
     // the crypto on sale isn't free: no other copy
     assert_eq!(virtuals(&bot).len(), 1);
 }
+
+#[tokio::test]
+async fn never_gives_a_copy_the_crypto_of_a_buy_filled_during_the_synchronization() {
+    // 40 USD: the buy of manager 1, not enough for a copy; no XBT in the account
+    let mut bot = bot(exchange("40"), SELLERS, ONE).await;
+    let first = bot.tick().await.unwrap();
+    let Some(Outcome::Placed {
+        side: OrderSide::Buy,
+        txid: Some(txid),
+        ..
+    }) = first.outcomes.get(&1)
+    else {
+        panic!("{first:?}");
+    };
+
+    // filled once the bot has read its orders: its XBT is in the account, the buy still open for
+    // the bot. It's manager 1's, not free
+    bot.exchange().fill_after_the_closed_orders(txid);
+    let second = bot.tick().await.unwrap();
+    assert!(holders(&bot).is_empty(), "{:?}", holders(&bot));
+    assert_eq!(second.outcomes.get(&1), Some(&Outcome::Waited));
+
+    // the next tick sees the buy filled: manager 1 sells its XBT, still no copy
+    let third = bot.tick().await.unwrap();
+    assert!(
+        matches!(
+            third.outcomes.get(&1),
+            Some(Outcome::Placed {
+                side: OrderSide::Sell,
+                ..
+            })
+        ),
+        "{third:?}"
+    );
+    assert!(holders(&bot).is_empty());
+}

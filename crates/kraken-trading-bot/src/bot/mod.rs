@@ -224,6 +224,11 @@ impl<E: Exchange> Bot<E> {
         if let Err(error) = self.save_new_managers(&managers, &markets) {
             tracing::warn!(%error, "the new managers couldn't be saved before the synchronization");
         }
+        // read before the orders: an order filled, expired or cancelled meanwhile is then known
+        // to its manager and not yet in the account, never in the account and unknown to its
+        // manager, which would make it look free to the virtual managers. At worst, what an order
+        // brought is spent a tick later
+        let balances = self.exchange.balances().await?;
         let ids = managers.iter().map(|it| it.id).collect();
         let sync =
             sync::synchronize(&self.exchange, &self.storage, &ids, self.exchange.now()).await?;
@@ -235,7 +240,6 @@ impl<E: Exchange> Bot<E> {
             tracing::error!(%error, "the changes of the orders couldn't be notified");
         }
 
-        let balances = self.exchange.balances().await?;
         self.record_account(&balances, &markets);
         // what the account has, decreased locally when orders are placed
         let mut available: HashMap<String, Decimal> = balances

@@ -112,6 +112,8 @@ pub struct Manager {
     pub template_id: Option<i32>,
     /// When the bot deleted the virtual manager
     pub deleted_at: Option<i64>,
+    /// The crypto a virtual manager started with instead of its budget, as bought with it
+    pub holding: Option<Decimal>,
 }
 
 impl Manager {
@@ -331,6 +333,9 @@ pub struct Database {
     connection: Connection,
     path: std::path::PathBuf,
     tables: HashSet<String>,
+    /// The virtual managers have the crypto they started with: the databases of the bots since
+    /// sell_free_base
+    holdings: bool,
     version: usize,
 }
 
@@ -380,10 +385,20 @@ impl Database {
         let version: i64 = connection
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .map_err(sql)?;
+        let holdings = tables.contains("virtual_managers")
+            && connection
+                .query_row(
+                    "SELECT EXISTS (SELECT 1 FROM pragma_table_info('virtual_managers')
+                        WHERE name = 'holding')",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(sql)?;
         Ok(Self {
             connection,
             path: path.to_path_buf(),
             tables,
+            holdings,
             version: version as usize,
         })
     }
@@ -633,10 +648,10 @@ impl Database {
                 m.entry_price, m.last_price, m.value, m.first_seen, m.updated_at, {}
              FROM managers m {} WHERE {} ORDER BY 1",
             self.key_of("m.account", "m.id"),
-            if virtuals {
-                "v.template_id, v.deleted_at"
-            } else {
-                "NULL, NULL"
+            match (virtuals, self.holdings) {
+                (true, true) => "v.template_id, v.deleted_at, v.holding",
+                (true, false) => "v.template_id, v.deleted_at, NULL",
+                _ => "NULL, NULL, NULL",
             },
             if virtuals {
                 if self.has_accounts() {
@@ -670,6 +685,7 @@ impl Database {
                 updated_at: row.get(15)?,
                 template_id: row.get(16)?,
                 deleted_at: row.get(17)?,
+                holding: optional_decimal(row, 18)?,
             })
         })?;
         rows.collect()

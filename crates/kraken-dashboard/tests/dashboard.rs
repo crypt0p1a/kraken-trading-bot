@@ -2,7 +2,7 @@
 //! breaks these tests, not the screen
 
 use kraken_dashboard::app::{App, Chart, Panel, Range, now_millis};
-use kraken_dashboard::data::Database;
+use kraken_dashboard::data::{Database, manager_number};
 use kraken_dashboard::stats::moves;
 use kraken_spot_api::trading::{OrderSide, OrderStatus};
 use kraken_trading_bot::config::{ManagerConfig, ManagerMode};
@@ -689,6 +689,69 @@ fn press(app: &mut App, database: &Database, key: char) {
     if app.on_key(KeyEvent::from(KeyCode::Char(key))) {
         app.refresh(database, true);
     }
+}
+
+#[test]
+fn counts_only_what_a_copy_made_on_the_crypto_it_started_with() {
+    use kraken_trading_bot::storage::VirtualManager;
+
+    let fixture = path("holding");
+    let storage = Storage::open(&fixture.path).unwrap();
+    let now = now_millis();
+    // a copy of 1 started with 0.0006 XBT, as bought with its 30, sold for 30.4 less 0.08
+    let config = ManagerConfig {
+        id: 1_000_001,
+        holding: Some(d("0.0006")),
+        ..config(1, "XBTUSD")
+    };
+    storage
+        .add_virtual_manager(&VirtualManager {
+            config: config.clone(),
+            template_id: 1,
+            created_at: now - 7_200_000,
+            reason: "sells the XBT no manager holds".into(),
+        })
+        .unwrap();
+    let sell = order(
+        "OHOLD",
+        config.id,
+        OrderSide::Sell,
+        OrderStatus::Closed,
+        "0.0006",
+        "0.0006",
+        "50666.67",
+        "30.4",
+        "0.08",
+        now as f64 / 1000.0 - 3_600.0,
+    );
+    storage.upsert_orders(std::slice::from_ref(&sell)).unwrap();
+    storage
+        .save_manager(&ManagerState {
+            balances: ledger::of(&config, std::slice::from_ref(&sell)),
+            config: config.clone(),
+            last_price: d("50000"),
+            at: now - 1_000,
+        })
+        .unwrap();
+
+    let (app, _database) = app(&fixture.path);
+    let manager = app
+        .model
+        .data
+        .managers
+        .iter()
+        .find(|it| it.number() == config.id)
+        .unwrap();
+    assert_eq!(manager.holding, Some(d("0.0006")));
+    let trades: Vec<_> = app
+        .model
+        .trades
+        .iter()
+        .filter(|it| manager_number(it.manager_id) == config.id)
+        .collect();
+    assert_eq!(trades.len(), 1);
+    // 0.32, not the 30.32 of a sale of crypto which cost nothing
+    assert_eq!(trades[0].pnl, d("0.32"));
 }
 
 #[test]
