@@ -556,12 +556,44 @@ fn draws_an_empty_database() {
     assert!(text.contains("NO MANAGER YET"), "{text}");
     assert!(text.contains("NO ORDER YET"), "{text}");
     let mut app = app;
+    // the charts too, each in its words
+    app.charts[0] = Chart::Price;
+    assert!(screen(&app, 140, 40).contains("NO MANAGER"));
+    app.charts[0] = Chart::Allocation;
+    screen(&app, 140, 40);
     app.on_key(key('d'));
     app.on_key(key('d'));
     assert!(screen(&app, 140, 40).contains("NO TICKER YET"));
     // nothing to go through
     app.on_key(KeyEvent::from(KeyCode::Right));
     assert_eq!(app.pair, None);
+}
+
+#[test]
+fn draws_the_open_orders_on_the_price() {
+    let fixture = path("open-sell");
+    let storage = write(&fixture.path);
+    let seconds = now_millis() as f64 / 1000.0 - 600.0;
+    storage
+        .upsert_orders(&[order(
+            "O5",
+            1,
+            OrderSide::Sell,
+            OrderStatus::Open,
+            "0.0001",
+            "0",
+            "77000",
+            "0",
+            "0",
+            seconds,
+        )])
+        .unwrap();
+    let (mut app, _database) = app(&fixture.path);
+    app.charts[0] = Chart::Price;
+    let text = screen(&app, 180, 48);
+    // the buy and the sell of manager 1, each a level of its own
+    assert!(text.contains("BUY 75,500.0"), "{text}");
+    assert!(text.contains("SELL 77,000.0"), "{text}");
 }
 
 #[test]
