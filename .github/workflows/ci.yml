@@ -30,7 +30,7 @@ jobs:
     name: Secrets (gitleaks + trufflehog)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: gitleaks, whole history (default rules + entropy rules of .gitleaks.toml)
@@ -42,7 +42,7 @@ jobs:
           docker run --rm -v "$PWD:/repo" -w /repo ghcr.io/gitleaks/gitleaks:v8.28.0 \
             dir /repo --config /repo/.gitleaks.toml --redact --no-banner --exit-code 1
       - name: trufflehog, whole history (verified and unverified secrets)
-        uses: trufflesecurity/trufflehog@v3.90.8
+        uses: trufflesecurity/trufflehog@v3.99.9
         with:
           extra_args: --results=verified,unknown,unverified
       - name: no credentials file committed
@@ -55,7 +55,7 @@ jobs:
     name: Format and clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -71,7 +71,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
@@ -83,7 +83,7 @@ jobs:
         run: cargo test --workspace --locked --doc
       - name: Test report
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: junit-${{ matrix.os }}
           path: target/nextest/ci/junit.xml
@@ -95,7 +95,7 @@ jobs:
     env:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
@@ -118,7 +118,7 @@ jobs:
       # nothing left out: the executables run in the tests, the bot on a mocked Kraken
       - name: Minimum coverage
         run: cargo llvm-cov report --summary-only --fail-under-lines 96
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: coverage
           path: |
@@ -126,7 +126,7 @@ jobs:
             coverage/html
       - name: Codecov (when the CODECOV_TOKEN secret is set)
         if: env.CODECOV_TOKEN != ''
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -136,12 +136,12 @@ jobs:
     name: Screenshots of the dashboard
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # the screens of this change, to compare with assets/screenshots
       - run: scripts/screenshots.sh screenshots
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: screenshots
           path: screenshots
@@ -156,13 +156,13 @@ jobs:
           - { arch: amd64, os: ubuntu-latest }
           - { arch: arm64, os: ubuntu-24.04-arm }
     steps:
-      - uses: actions/checkout@v5
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
       # the cache mounts of the Dockerfile (registry, target) live in the runner, lost after the job:
       # kept in the cache of GitHub, then put back into BuildKit before the build
       - name: Cache of the cargo mounts of the Dockerfile
         id: cargo-mounts
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             cargo-registry
@@ -179,7 +179,7 @@ jobs:
           skip-extraction: ${{ steps.cargo-mounts.outputs.cache-hit }}
       # the layers (the base images) in the cache of GitHub too
       - name: Build the image of kraken-trading-bot
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           load: true
@@ -212,7 +212,7 @@ jobs:
     name: Minimum Rust version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: The rust-version of Cargo.toml
         id: msrv
         run: echo "version=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
@@ -228,7 +228,7 @@ jobs:
     name: Dependencies (cargo deny)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check advisories licenses bans sources
@@ -241,7 +241,7 @@ jobs:
       KRAKEN_API_KEY: ${{ secrets.KRAKEN_API_KEY }}
       KRAKEN_API_SECRET: ${{ secrets.KRAKEN_API_SECRET }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
@@ -254,7 +254,7 @@ jobs:
           -p kraken-trading-bot --test live_dry_run
       - name: Test report
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: junit-live-private
           path: target/nextest/live/junit.xml
@@ -273,7 +273,7 @@ jobs:
       checks: write
       pull-requests: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: junit-*
           path: junit
