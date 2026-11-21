@@ -120,8 +120,9 @@ impl Performance {
 }
 
 /// Replays the orders of a manager as the ledger of the bot does: the cost of the position is
-/// shared by what's sold of it
-pub fn performance(orders: &[&Order]) -> Performance {
+/// shared by what's sold of it. A manager which started with crypto, `holding` bought with its
+/// budget, starts with that position
+pub fn performance(orders: &[&Order], holding: Option<(Decimal, Decimal)>) -> Performance {
     let mut sorted = orders.to_vec();
     sorted.sort_by(|a, b| {
         a.open_time
@@ -130,8 +131,7 @@ pub fn performance(orders: &[&Order]) -> Performance {
     });
 
     let mut result = Performance::default();
-    let mut position_base = Decimal::ZERO;
-    let mut position_cost = Decimal::ZERO;
+    let (mut position_base, mut position_cost) = holding.unwrap_or_default();
 
     for order in sorted {
         let executed = order.volume_executed;
@@ -329,9 +329,15 @@ impl Model {
         for order in &data.orders {
             by_manager.entry(order.manager_id).or_default().push(order);
         }
+        // the crypto a virtual manager started with, as bought with its budget
+        let holdings: HashMap<ManagerKey, (Decimal, Decimal)> = data
+            .managers
+            .iter()
+            .filter_map(|it| Some((it.id, (it.holding?, it.budget))))
+            .collect();
         let performances: HashMap<ManagerKey, Performance> = by_manager
             .iter()
-            .map(|(id, orders)| (*id, performance(orders)))
+            .map(|(id, orders)| (*id, performance(orders, holdings.get(id).copied())))
             .collect();
 
         let quotes: HashMap<ManagerKey, String> = data
@@ -914,7 +920,7 @@ mod tests {
             order(2.0, Side::Sell, "0.001", "52", "0.2"),
             order(3.0, Side::Sell, "0.001", "49", "0.2"),
         ];
-        let performance = performance(&orders.iter().collect::<Vec<_>>());
+        let performance = performance(&orders.iter().collect::<Vec<_>>(), None);
 
         assert_eq!(performance.trades.len(), 2);
         assert_eq!(performance.trades[0].pnl, d("1.6"));
@@ -926,11 +932,26 @@ mod tests {
     }
 
     #[test]
+    fn starts_from_the_crypto_a_manager_started_with() {
+        // 0.0006 XBT, as bought with 30, sold for 30.4 less 0.08 of fees: 0.32, not 30.32
+        let orders = [order(1.0, Side::Sell, "0.0006", "30.4", "0.08")];
+        let performance = performance(
+            &orders.iter().collect::<Vec<_>>(),
+            Some((d("0.0006"), d("30"))),
+        );
+        assert_eq!(performance.trades.len(), 1);
+        assert_eq!(performance.trades[0].pnl, d("0.32"));
+        assert_eq!(performance.realized, d("0.32"));
+        assert!(performance.trades[0].percent > 1.0 && performance.trades[0].percent < 1.1);
+        assert_eq!(performance.wins(), 1);
+    }
+
+    #[test]
     fn ignores_the_sells_not_executed() {
         let mut canceled = order(2.0, Side::Sell, "0", "0", "0");
         canceled.status = "canceled".into();
         let orders = [order(1.0, Side::Buy, "0.001", "50", "0"), canceled];
-        let performance = performance(&orders.iter().collect::<Vec<_>>());
+        let performance = performance(&orders.iter().collect::<Vec<_>>(), None);
         assert!(performance.trades.is_empty());
         assert_eq!(performance.realized, Decimal::ZERO);
     }
