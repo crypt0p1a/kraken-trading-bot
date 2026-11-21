@@ -608,6 +608,29 @@ fn draws_the_open_orders_on_the_price() {
 }
 
 #[test]
+fn draws_a_change_of_the_price_from_a_first_price_of_zero() {
+    let fixture = path("zero-price");
+    let storage = write(&fixture.path);
+    storage
+        .record_ticker(&TickerRecord {
+            pair: "XXBTZUSD".into(),
+            at: now_millis() - 900_000,
+            last: d("0"),
+            bid: d("0"),
+            ask: d("0"),
+            volume_24h: d("0"),
+            vwap_24h: d("0"),
+        })
+        .unwrap();
+    let (mut app, _database) = app(&fixture.path);
+    app.charts[0] = Chart::Price;
+    let text = screen(&app, 180, 48);
+    // the change from the first price known, 75,800: neither infinite nor a NaN
+    assert!(text.contains("XBTUSD 76,100.0 ▲ +0.40%"), "{text}");
+    assert!(!text.contains("inf") && !text.contains("NaN"), "{text}");
+}
+
+#[test]
 fn sees_when_the_bot_writes() {
     let fixture = path("version");
     let storage = write(&fixture.path);

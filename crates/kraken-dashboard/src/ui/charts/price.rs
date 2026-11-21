@@ -69,7 +69,12 @@ pub(super) fn render_price(frame: &mut Frame, app: &App, area: Rect) {
         ),
     );
     let last = prices.last().map_or(0.0, |it| it.1);
-    let change = (last - prices[0].1) / prices[0].1 * 100.0;
+    // from the first price known: a ticker of 0 says nothing of the price
+    let change = prices
+        .iter()
+        .map(|it| it.1)
+        .find(|it| *it > 0.0)
+        .map_or(0.0, |first| (last - first) / first * 100.0);
 
     let mut datasets = vec![
         Dataset::default()
