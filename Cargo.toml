@@ -30,7 +30,7 @@ fastrand = "2.3.0"
 humantime-serde = "1.1.1"
 # notifications: only the async dispatcher, on rustls
 ntfy = { version = "0.9.1", default-features = false, features = ["async-dispatcher", "rustls"] }
-rusqlite = { version = "0.41.1", features = ["bundled"] }
+rusqlite = { version = "0.43.0", features = ["bundled"] }
 rust_decimal = { version = "1.43.0", features = ["serde-str"] }
 serde_norway = "0.9.42"
 tracing = "0.1.44"
