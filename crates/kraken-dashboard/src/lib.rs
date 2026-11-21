@@ -10,7 +10,7 @@
 //! | [`ui`] | the screen |
 //! | [`settings`] | what the screen shows, kept from a run to the next |
 //! | [`desk`] | the loop: the screen, the keys, the reads of the database |
-//! | [`format`], [`theme`] | the numbers and the times, the colors |
+//! | [`format`](mod@format), [`theme`] | the numbers and the times, the colors |
 //! | [`svg`] | a screen as an SVG image: the screenshots |
 
 pub mod app;

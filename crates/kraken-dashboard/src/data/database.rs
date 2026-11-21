@@ -112,7 +112,7 @@ impl Database {
         }
     }
 
-    /// The key of a manager from the column of its account and of its id: see [`ManagerKey`]
+    /// The key of a manager from the column of its account and of its id: see [`ManagerKey`](super::ManagerKey)
     pub(super) fn key_of(&self, account: &str, id: &str) -> String {
         if self.has_accounts() {
             format!("(({account} - 1) << 32) | {id}")

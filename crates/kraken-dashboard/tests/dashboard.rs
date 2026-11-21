@@ -556,11 +556,22 @@ fn draws_an_empty_database() {
     assert!(text.contains("NO MANAGER YET"), "{text}");
     assert!(text.contains("NO ORDER YET"), "{text}");
     let mut app = app;
-    // the charts too, each in its words
+    // the charts too, each in its words: the panel of the managers says "NO MANAGER YET", the
+    // chart of the price "NO MANAGER" alone
     app.charts[0] = Chart::Price;
-    assert!(screen(&app, 140, 40).contains("NO MANAGER"));
+    let price = screen(&app, 140, 40);
+    assert!(price.contains("PRICE"), "{price}");
+    assert!(
+        price.matches("NO MANAGER").count() > price.matches("NO MANAGER YET").count(),
+        "{price}"
+    );
     app.charts[0] = Chart::Allocation;
-    screen(&app, 140, 40);
+    let allocation = screen(&app, 140, 40);
+    assert!(allocation.contains("BY CRYPTO"), "{allocation}");
+    assert!(
+        allocation.contains("NOT ENOUGH TICKS IN THE RANGE"),
+        "{allocation}"
+    );
     app.on_key(key('d'));
     app.on_key(key('d'));
     assert!(screen(&app, 140, 40).contains("NO TICKER YET"));
