@@ -12,15 +12,16 @@ use ratatui::symbols::Marker;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Dataset, GraphType, Paragraph};
 
-/// The color of a layer of the portfolio: always the same for a crypto, from a tick to the next
+/// The color of a layer of the portfolio: always the same for a crypto, from a tick to the next.
+/// The quote is dimmed first, a crypto or not: what's not held is told apart from what is
 fn layer_color(name: &str, quote: &str) -> Color {
     match name {
+        _ if name == quote => theme::DIM,
         "XBT" | "BTC" => AMBER,
         "ETH" => theme::VIOLET,
         "SOL" => CYAN,
         "XRP" => Color::Rgb(90, 140, 255),
         crate::stats::OTHER => FAINT,
-        _ if name == quote => theme::DIM,
         _ => GOLD,
     }
 }
@@ -127,6 +128,9 @@ mod tests {
         // the quote, whatever it is
         assert_eq!(layer_color("USD", "USD"), theme::DIM);
         assert_eq!(layer_color("EUR", "EUR"), theme::DIM);
+        // a crypto as the quote, ETH/XBT: the quote all the same, not the color of a held BTC
+        assert_eq!(layer_color("XBT", "XBT"), theme::DIM);
+        assert_eq!(layer_color("ETH", "XBT"), theme::VIOLET);
         // any other crypto
         assert_eq!(layer_color("ADA", "USD"), GOLD);
     }
