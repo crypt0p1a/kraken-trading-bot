@@ -26,6 +26,7 @@ mod panels;
 use crate::app::{App, Range, now_millis};
 use crate::data::{percent, to_f64};
 use crate::format;
+use crate::keys::KeyCode;
 use crate::stats::Totals;
 use crate::theme::{self, AMBER, BACKGROUND, DIM, DOWN, GOLD, TEXT, UP, VIOLET};
 use ratatui::Frame;
@@ -100,6 +101,27 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 }
 
+/// The key a tap at (`column`, `row`) of a screen of `area` stands for, where nothing else than a
+/// screen can be typed on: the badge of the account and the footer of the desk, the buttons of the
+/// compact view
+pub fn tap(app: &App, area: Rect, column: u16, row: u16) -> Option<KeyCode> {
+    if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
+        return compact::tap(app, area, column, row);
+    }
+    if row == area.y {
+        under(&header_left(app), area.x, column)
+    } else if row + 1 == area.y + area.height {
+        // the status on the right hides the keys under it: none of them
+        let status = footer_status(app).width() as u16;
+        if column + status >= area.x + area.width {
+            return None;
+        }
+        under(&footer_items(app), area.x, column)
+    } else {
+        None
+    }
+}
+
 /// A panel: rounded, amber when it has the keys
 pub(crate) fn panel<'a>(title: Line<'a>, focused: bool) -> Block<'a> {
     Block::new()
@@ -126,44 +148,67 @@ pub(crate) fn title<'a>(name: &str, details: impl IntoIterator<Item = Span<'a>>)
     Line::from(spans)
 }
 
-fn render_header(frame: &mut Frame, app: &App, area: Rect) {
-    let now = now_millis();
+/// The left of the header, each span with the key it stands for when tapped: the account shown
+fn header_left(app: &App) -> Vec<(Span<'static>, Option<KeyCode>)> {
     let blink = (app.elapsed() / 600).is_multiple_of(2);
-
-    let mut left = vec![
-        Span::styled(" ◆ KRAKEN ", Style::new().fg(Color::Black).bg(AMBER).bold()),
-        Span::styled(
-            " TRADING DESK ",
-            Style::new().fg(AMBER).bg(theme::SELECTED).bold(),
+    let mut left: Vec<(Span<'static>, Option<KeyCode>)> = vec![
+        (
+            Span::styled(" ◆ KRAKEN ", Style::new().fg(Color::Black).bg(AMBER).bold()),
+            None,
         ),
-        Span::raw(" "),
+        (
+            Span::styled(
+                " TRADING DESK ",
+                Style::new().fg(AMBER).bg(theme::SELECTED).bold(),
+            ),
+            None,
+        ),
+        (Span::raw(" "), None),
     ];
-    left.push(match app.model.data.dry_run.map(|it| !it) {
-        Some(true) => Span::styled(
-            if blink { " ● LIVE " } else { " ○ LIVE " },
-            Style::new().fg(Color::Black).bg(UP).bold(),
-        ),
-        Some(false) => Span::styled(" ◌ DRY RUN ", Style::new().fg(Color::Black).bg(GOLD).bold()),
-        None => Span::styled(" NO ORDER YET ", theme::dim()),
-    });
+    left.push((
+        match app.model.data.dry_run.map(|it| !it) {
+            Some(true) => Span::styled(
+                if blink { " ● LIVE " } else { " ○ LIVE " },
+                Style::new().fg(Color::Black).bg(UP).bold(),
+            ),
+            Some(false) => {
+                Span::styled(" ◌ DRY RUN ", Style::new().fg(Color::Black).bg(GOLD).bold())
+            }
+            None => Span::styled(" NO ORDER YET ", theme::dim()),
+        },
+        None,
+    ));
     if let Some(name) = app.view_name() {
-        left.push(Span::raw(" "));
-        left.push(Span::styled(
-            format!(" ▣ {name} "),
-            Style::new().fg(Color::Black).bg(VIOLET).bold(),
+        left.push((Span::raw(" "), None));
+        left.push((
+            Span::styled(
+                format!(" ▣ {name} "),
+                Style::new().fg(Color::Black).bg(VIOLET).bold(),
+            ),
+            Some(KeyCode::Char('a')),
         ));
     }
     if let Some(manager) = app.focus() {
-        left.push(Span::raw("  "));
-        left.push(Span::styled(
-            format!(
-                " ▸ MANAGER {} · {} ",
-                app.manager_name(manager.id),
-                manager.pair
+        left.push((Span::raw("  "), None));
+        left.push((
+            Span::styled(
+                format!(
+                    " ▸ MANAGER {} · {} ",
+                    app.manager_name(manager.id),
+                    manager.pair
+                ),
+                Style::new().fg(Color::Black).bg(theme::CYAN).bold(),
             ),
-            Style::new().fg(Color::Black).bg(theme::CYAN).bold(),
+            None,
         ));
     }
+    left
+}
+
+fn render_header(frame: &mut Frame, app: &App, area: Rect) {
+    let now = now_millis();
+    let blink = (app.elapsed() / 600).is_multiple_of(2);
+    let left: Vec<Span> = header_left(app).into_iter().map(|(span, _)| span).collect();
     frame.render_widget(Paragraph::new(Line::from(left)), area);
 
     let last_tick = app.model.data.managers.iter().map(|it| it.updated_at).max();
@@ -489,10 +534,71 @@ fn key<'a>(key: &'a str, name: &'a str) -> [Span<'a>; 2] {
     ]
 }
 
-fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
-    let ranges: Vec<Span> = Range::ALL
-        .iter()
-        .map(|range| {
+/// The key a label of the footer stands for, tapped: none for those which want a direction
+fn key_of(label: &str) -> Option<KeyCode> {
+    match label {
+        "tab" => Some(KeyCode::Tab),
+        "⏎" => Some(KeyCode::Enter),
+        single if single.chars().count() == 1 => single.chars().next().map(KeyCode::Char),
+        _ => None,
+    }
+}
+
+/// The keys of the footer and the ranges, each span with the key it stands for when tapped
+fn footer_items(app: &App) -> Vec<(Span<'static>, Option<KeyCode>)> {
+    let keys: Vec<(&str, &str)> = if app.markets {
+        vec![
+            ("q", "QUIT"),
+            ("d", "DESK"),
+            ("←→", "PAIR"),
+            ("r", "RELOAD"),
+            ("t", "TICK"),
+            ("?", "HELP"),
+            ("1-5", "RANGE"),
+        ]
+    } else if app.all_charts {
+        vec![
+            ("q", "QUIT"),
+            ("d", "MARKETS"),
+            ("↑↓", "MANAGER"),
+            ("⏎", if app.drilled { "ALL" } else { "FOCUS" }),
+            ("r", "RELOAD"),
+            ("t", "TICK"),
+            ("?", "HELP"),
+            ("1-5", "RANGE"),
+        ]
+    } else {
+        vec![
+            ("q", "QUIT"),
+            ("d", "ALL CHARTS"),
+            ("tab", "PANEL"),
+            ("↑↓", "MOVE"),
+            ("←→ s", "SORT"),
+            ("⏎", if app.drilled { "ALL" } else { "FOCUS" }),
+            ("c v b", "CHARTS"),
+            ("o", if app.open_only { "ALL ORDERS" } else { "OPEN" }),
+            ("i", if app.show_idle { "HIDE IDLE" } else { "IDLE" }),
+            ("r", "RELOAD"),
+            ("t", "TICK"),
+            ("?", "HELP"),
+            ("1-5", "RANGE"),
+        ]
+    };
+    let mut items: Vec<(Span<'static>, Option<KeyCode>)> = Vec::new();
+    let push_key = |items: &mut Vec<_>, label: &str, name: &str| {
+        let code = key_of(label);
+        let [key, name] = key(label, name);
+        items.push((Span::styled(key.content.into_owned(), key.style), code));
+        items.push((Span::styled(name.content.into_owned(), name.style), code));
+    };
+    if app.several_accounts() {
+        push_key(&mut items, "a", "ACCOUNT");
+    }
+    for (label, name) in keys {
+        push_key(&mut items, label, name);
+    }
+    for (index, range) in Range::ALL.iter().enumerate() {
+        items.push((
             Span::styled(
                 format!(" {} ", range.label()),
                 if *range == app.range {
@@ -500,56 +606,43 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
                 } else {
                     theme::dim()
                 },
-            )
-        })
-        .collect();
-
-    let keys: Vec<[Span; 2]> = if app.markets {
-        vec![
-            key("q", "QUIT"),
-            key("d", "DESK"),
-            key("←→", "PAIR"),
-            key("r", "RELOAD"),
-            key("t", "TICK"),
-            key("?", "HELP"),
-            key("1-5", "RANGE"),
-        ]
-    } else if app.all_charts {
-        vec![
-            key("q", "QUIT"),
-            key("d", "MARKETS"),
-            key("↑↓", "MANAGER"),
-            key("⏎", if app.drilled { "ALL" } else { "FOCUS" }),
-            key("r", "RELOAD"),
-            key("t", "TICK"),
-            key("?", "HELP"),
-            key("1-5", "RANGE"),
-        ]
-    } else {
-        vec![
-            key("q", "QUIT"),
-            key("d", "ALL CHARTS"),
-            key("tab", "PANEL"),
-            key("↑↓", "MOVE"),
-            key("←→ s", "SORT"),
-            key("⏎", if app.drilled { "ALL" } else { "FOCUS" }),
-            key("c v b", "CHARTS"),
-            key("o", if app.open_only { "ALL ORDERS" } else { "OPEN" }),
-            key("i", if app.show_idle { "HIDE IDLE" } else { "IDLE" }),
-            key("r", "RELOAD"),
-            key("t", "TICK"),
-            key("?", "HELP"),
-            key("1-5", "RANGE"),
-        ]
-    };
-    let mut spans: Vec<Span> = keys.into_iter().flatten().collect();
-    if app.several_accounts() {
-        spans.splice(0..0, key("a", "ACCOUNT"));
+            ),
+            char::from_digit(index as u32 + 1, 10).map(KeyCode::Char),
+        ));
     }
-    spans.extend(ranges);
+    items
+}
+
+/// What's under `column` of a line of spans, each with what it stands for
+fn under<T: Copy>(items: &[(Span, Option<T>)], start: u16, column: u16) -> Option<T> {
+    let mut left = start;
+    for (span, what) in items {
+        let width = span.width() as u16;
+        if column >= left && column < left + width {
+            return *what;
+        }
+        left += width;
+    }
+    None
+}
+
+fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
+    let spans: Vec<Span> = footer_items(app)
+        .into_iter()
+        .map(|(span, _)| span)
+        .collect();
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 
-    let status = match &app.error {
+    frame.render_widget(
+        Paragraph::new(Line::from(footer_status(app))).alignment(Alignment::Right),
+        area,
+    );
+}
+
+/// The right of the footer, over the keys when the screen is narrow: an error, or how long since
+/// it was read
+fn footer_status(app: &App) -> Span<'static> {
+    match &app.error {
         Some(error) => Span::styled(format!("✗ {error} "), theme::bold(DOWN)),
         None => Span::styled(
             format!(
@@ -559,11 +652,7 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
             ),
             Style::new().fg(UP).add_modifier(Modifier::DIM),
         ),
-    };
-    frame.render_widget(
-        Paragraph::new(Line::from(status)).alignment(Alignment::Right),
-        area,
-    );
+    }
 }
 
 fn render_help(frame: &mut Frame, area: Rect) {

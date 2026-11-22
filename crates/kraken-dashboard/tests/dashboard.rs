@@ -441,6 +441,72 @@ fn shows_the_portfolio_on_a_small_screen() {
     assert!(screen(&app, 100, 28).contains("MANAGERS"));
 }
 
+/// Where nothing else than the screen is typed on, a tablet or a phone: a tap stands for a key, as
+/// pressed. The footer and the badge of the account of the desk, the buttons of the compact view
+#[test]
+fn takes_a_tap_for_a_key() {
+    use kraken_dashboard::ui::tap;
+    use ratatui::layout::Rect;
+
+    let fixture = path("taps");
+    let _storage = write(&fixture.path);
+    let _alice = second_account(&fixture.path);
+    let (mut app, database) = app(&fixture.path);
+    // where a text is on the screen: (column, row)
+    let find = |screen: &str, text: &str| {
+        screen.lines().enumerate().find_map(|(row, line)| {
+            line.find(text)
+                .map(|at| (line[..at].chars().count() as u16, row as u16))
+        })
+    };
+    let pressed = |app: &mut App, key: kraken_dashboard::keys::KeyCode| {
+        if app.on_key(key) {
+            app.refresh(&database, true);
+        }
+    };
+
+    // the desk: a range of the footer, then the account of the header
+    let desk = Rect::new(0, 0, 260, 50);
+    let (column, row) = find(&screen(&app, 260, 50), " 7D ").unwrap();
+    let key = tap(&app, desk, column + 1, row).unwrap();
+    pressed(&mut app, key);
+    assert_eq!(app.range, Range::Week);
+    let (column, row) = find(&screen(&app, 260, 50), "▣").unwrap();
+    let key = tap(&app, desk, column + 2, row).unwrap();
+    pressed(&mut app, key);
+    assert_eq!(app.view, Some(1));
+    // the tables themselves aren't buttons
+    assert_eq!(tap(&app, desk, 20, 20), None);
+    // narrower, the status hides the end of the footer: nothing under it
+    let narrow = Rect::new(0, 0, 200, 50);
+    let footer = screen(&app, 200, 50);
+    let (column, row) = find(&footer, "SYNCED").unwrap();
+    assert_eq!(tap(&app, narrow, column, row), None);
+    let (column, row) = find(&footer, " 1H ").unwrap();
+    assert_eq!(
+        tap(&app, narrow, column + 1, row),
+        Some(kraken_dashboard::keys::KeyCode::Char('1'))
+    );
+
+    // a phone: the buttons of the compact view, the next account, the next range
+    let phone = Rect::new(0, 0, 50, 45);
+    let compact = screen(&app, 50, 45);
+    assert!(
+        compact.contains("ACCOUNT") && compact.contains("RANGE"),
+        "{compact}"
+    );
+    let (column, row) = find(&compact, "ACCOUNT").unwrap();
+    let key = tap(&app, phone, column, row + 1).unwrap();
+    pressed(&mut app, key);
+    assert_eq!(app.view, Some(2));
+    let (column, row) = find(&compact, "RANGE").unwrap();
+    let key = tap(&app, phone, column, row + 1).unwrap();
+    pressed(&mut app, key);
+    assert_eq!(app.range, Range::Month);
+    // the charts aren't buttons
+    assert_eq!(tap(&app, phone, 10, 40), None);
+}
+
 /// `DASHBOARD_COMPACT=1 cargo test -p kraken-dashboard compact_screens -- --ignored --nocapture`
 /// prints the compact view at the sizes of a phone
 #[test]

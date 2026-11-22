@@ -54,6 +54,10 @@ side on a wide and low screen, a phone held sideways. Smaller than 30 by 12, its
 On the web, a tablet gets the desk (its font made smaller to hold 100 by 28 cells), a phone this
 view.
 
+Without a keyboard, a tap is a key: on the desk, the badge of the account in the header (`a`) and
+each key of the footer, its ranges included; on the compact view, its buttons, the next account
+and the next range.
+
 ## Keys
 
 `d` the next screen, in a circle: every chart, the page of the markets (`←` `→` the pair), the desk again (`esc` back to the desk), `tab` the panel the arrows move in, `←` `→` the column its table is sorted on, `s` the other

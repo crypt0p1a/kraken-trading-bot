@@ -3,6 +3,8 @@
 //!
 //! ```text
 //! ◆ KRAKEN ● LIVE              TICK 2m AGO
+//! ┌ACCOUNT───────────┐┌RANGE─────────────┐   tapped: the next account, the next range
+//! │▸ ALL ACCOUNTS · 2││▸ 24H             │
 //! ┌PORTFOLIO─────────┐┌P&L───────────────┐
 //! │595.83 EUR        ││-141.79           │
 //! ┌REALIZED──────────┐┌TARGET────────────┐
@@ -18,7 +20,8 @@ use super::tile;
 use crate::app::{App, Chart, now_millis};
 use crate::data::{percent, to_f64};
 use crate::format;
-use crate::theme::{self, AMBER, DOWN, GOLD, TEXT, UP, VIOLET};
+use crate::keys::KeyCode;
+use crate::theme::{self, AMBER, DOWN, GOLD, TEXT, UP};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Style};
@@ -33,6 +36,8 @@ pub const MIN_HEIGHT: u16 = 12;
 const TILES_ON_A_ROW: u16 = 80;
 /// The height of a row of tiles: a border, a value, a detail, a border
 const TILE_HEIGHT: u16 = 4;
+/// The height of the buttons: high enough to be tapped
+const BUTTON_HEIGHT: u16 = 3;
 /// What a chart wants at least, in rows
 const CHART_HEIGHT: u16 = 8;
 /// A chart is at least this wide, the charts side by side
@@ -51,17 +56,79 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         frame.render_widget(message, area);
         return;
     }
-    let wide = area.width >= TILES_ON_A_ROW;
-    let tiles_height = if wide { TILE_HEIGHT } else { 2 * TILE_HEIGHT };
-    let [header, tiles, charts] = Layout::vertical([
+    let [header, buttons, tiles, charts] = layout(area);
+    render_header(frame, app, header);
+    for (place, button) in buttons_of(app, buttons) {
+        super::tile(
+            frame,
+            place,
+            button.title,
+            Span::styled(format!("▸ {}", button.label), theme::bold(AMBER)),
+            Line::from(""),
+        );
+    }
+    render_tiles(frame, app, tiles, area.width >= TILES_ON_A_ROW);
+    render_charts(frame, app, charts);
+}
+
+/// The header, the buttons, the tiles, the charts
+fn layout(area: Rect) -> [Rect; 4] {
+    let tiles_height = if area.width >= TILES_ON_A_ROW {
+        TILE_HEIGHT
+    } else {
+        2 * TILE_HEIGHT
+    };
+    Layout::vertical([
         Constraint::Length(1),
+        Constraint::Length(BUTTON_HEIGHT),
         Constraint::Length(tiles_height),
         Constraint::Fill(1),
     ])
-    .areas(area);
-    render_header(frame, app, header);
-    render_tiles(frame, app, tiles, wide);
-    render_charts(frame, app, charts);
+    .areas(area)
+}
+
+/// What a button does when tapped, as the key would
+struct Button {
+    title: &'static str,
+    label: String,
+    key: KeyCode,
+}
+
+/// The buttons and their places: the next account when there are several, the next range
+fn buttons_of(app: &App, area: Rect) -> Vec<(Rect, Button)> {
+    let mut buttons = Vec::new();
+    if let Some(name) = app.view_name() {
+        buttons.push(Button {
+            title: "ACCOUNT",
+            label: name,
+            key: KeyCode::Char('a'),
+        });
+    }
+    let index = crate::app::Range::ALL
+        .iter()
+        .position(|it| *it == app.range)
+        .unwrap_or(0);
+    let next = (index + 1) % crate::app::Range::ALL.len();
+    buttons.push(Button {
+        title: "RANGE",
+        label: app.range.label().to_string(),
+        key: KeyCode::Char(char::from_digit(next as u32 + 1, 10).unwrap_or('1')),
+    });
+    let places = Layout::horizontal(vec![Constraint::Fill(1); buttons.len()]).split(area);
+    places.iter().copied().zip(buttons).collect()
+}
+
+/// The key a tap at (`column`, `row`) stands for: a button
+pub fn tap(app: &App, area: Rect, column: u16, row: u16) -> Option<KeyCode> {
+    if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
+        return None;
+    }
+    let [_, buttons, _, _] = layout(area);
+    let at = ratatui::layout::Position::new(column, row);
+    buttons_of(app, buttons)
+        .into_iter()
+        .find(|(place, _)| place.contains(at))
+        .map(|(_, button)| button.key)
 }
 
 /// LIVE or DRY RUN, the account shown, how long since the bot ticked
@@ -75,13 +142,6 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
         Some(false) => Span::styled(" ◌ DRY RUN ", Style::new().fg(Color::Black).bg(GOLD).bold()),
         None => Span::styled(" NO ORDER YET ", theme::dim()),
     });
-    if let Some(name) = app.view_name() {
-        left.push(Span::raw(" "));
-        left.push(Span::styled(
-            format!(" {name} "),
-            Style::new().fg(Color::Black).bg(VIOLET).bold(),
-        ));
-    }
     frame.render_widget(Paragraph::new(Line::from(left)), area);
 
     let last_tick = app.model.data.managers.iter().map(|it| it.updated_at).max();
