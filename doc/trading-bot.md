@@ -63,7 +63,7 @@ managers:
 | `KRAKEN_BOT_NTFY_TOPIC`, `KRAKEN_BOT_NTFY_TOKEN` | | the [notifications](#notifications) |
 | `KRAKEN_BOT_API_HOST` | `https://api.kraken.com` | another host speaking the API of Kraken: a mocked Kraken in the tests |
 | `KRAKEN_BOT_PUSH_URL` | | its [web backend](#web-backend): what the dashboard shows is pushed there at each tick |
-| `KRAKEN_BOT_PUSH_KEY` | | required with `KRAKEN_BOT_PUSH_URL`: the key the pushes are signed with, the backend's too |
+| `KRAKEN_BOT_PUSH_KEY` | | needed with `KRAKEN_BOT_PUSH_URL`: the key the pushes are signed with, the backend's too |
 | `RUST_LOG` | `info` | |
 
 ## Several accounts
@@ -192,7 +192,9 @@ pushed, nothing goes on the network.
   `KRAKEN_DASHBOARD_WEB_PUSH_KEY` of the backend: the same key, never sent. Each push carries when
   it was signed (`X-Kraken-Push-At`, UTC milliseconds) and an HMAC-SHA256 of that time and of the
   body as sent (`X-Kraken-Push-Signature: sha256=<hex>`). The backend takes the pushes of the bot
-  only, never one heard on the way and sent again. The bot doesn't start with a URL and no key.
+  only, never one heard on the way and sent again, nor one older than the last it took. With a URL
+  and no key (or one too short), the bot trades and pushes nothing, which it tells in its logs; a
+  push refused, it logs why, as the backend tells it (not its key, a clock too far from its own).
 - **Read only**: nothing comes back from the backend to the bot.
 - **Never in the way**: the pusher has a thread and a connection of its own. The backend away or
   slow, the bot goes on trading, says so once in its logs, and pushes its last state again every 30

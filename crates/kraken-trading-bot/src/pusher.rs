@@ -189,6 +189,11 @@ impl Pusher {
         })
     }
 
+    /// What failed last, as it's logged: None once it works again
+    pub fn failing(&self) -> Option<&str> {
+        self.failing.as_deref()
+    }
+
     /// Pushes when there's something new to push, told once when it fails
     pub fn step(&mut self) {
         if !self.wanted {
@@ -223,7 +228,8 @@ impl Pusher {
         let body = wire::gzip(&json);
         // signed as it's sent, compressed
         let signed_at = now_millis();
-        self.client
+        let response = self
+            .client
             .put(&self.state)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .header(reqwest::header::CONTENT_ENCODING, "gzip")
@@ -231,9 +237,15 @@ impl Pusher {
             .header(SIGNATURE, sign(&self.key, signed_at, &body))
             .body(body)
             .send()
-            .and_then(|it| it.error_for_status())
             // its text holds the URL: without it
             .map_err(|error| format!("push: {}", error.without_url()))?;
+        let status = response.status();
+        if !status.is_success() {
+            // the backend tells why: not its key, a clock too far from its own, a push of before
+            let why = response.text().unwrap_or_default();
+            let why: String = why.trim().chars().take(200).collect();
+            return Err(format!("push refused, {status}: {why}"));
+        }
         tracing::debug!(
             views = push.views.len(),
             bytes = json.len(),
@@ -267,10 +279,24 @@ mod tests {
         }
     }
 
-    /// The value kraken-dashboard-web checks, HMAC-SHA256 of RFC 4231, test case 2: the key
-    /// "Jefe", over "what do ya want for nothing?"
+    /// The very value kraken-dashboard-web checks: the same vector is in its tests, computed apart
+    /// (Python's hmac). A change of one side only fails here or there
     #[test]
     fn signs_as_the_backend_checks() {
+        assert_eq!(
+            sign(
+                b"kraken-dashboard-web",
+                1_795_316_768_688,
+                b"{\"at\":1795316768688,\"views\":[]}"
+            ),
+            "sha256=a7c3f506b4154c876d825fe791df3f461d098fc9527c99930e86473c935c6f34"
+        );
+    }
+
+    /// HMAC-SHA256 itself, RFC 4231, test case 2: the key "Jefe", over "what do ya want for
+    /// nothing?"
+    #[test]
+    fn computes_hmac_sha256() {
         let body = b"what do ya want for nothing?";
         // the time first: a body without it, signed at 0, is another message
         assert_ne!(sign(b"Jefe", 0, body), sign(b"Jefe", 1, body));

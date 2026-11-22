@@ -115,6 +115,9 @@ async fn run(mode: Mode) -> Result<(), String> {
         return check_keys(&bots).await;
     }
 
+    if let Some(problem) = environment.push_problem() {
+        tracing::error!("{problem}");
+    }
     // the ticks of every account, pushed at the end of each: a loop of the bot only
     let (ticked, pushing) = match (&environment.push_url, &environment.push_key) {
         (Some(url), Some(key)) if mode == Mode::Loop => {

@@ -51,6 +51,7 @@ impl Received {
 fn backend() -> (String, Received) {
     use axum::body::Bytes;
     use axum::http::{HeaderMap, StatusCode};
+    use axum::response::IntoResponse;
     use axum::routing::put;
 
     let received = Received::default();
@@ -68,7 +69,11 @@ fn backend() -> (String, Received) {
                             // compressed and signed, always
                             assert_eq!(headers["content-encoding"], "gzip");
                             if !signed_by_the_bot(&headers, &body) {
-                                return StatusCode::UNAUTHORIZED;
+                                return (
+                                    StatusCode::UNAUTHORIZED,
+                                    "a wrong signature: not the key of the backend",
+                                )
+                                    .into_response();
                             }
                             let json = gunzip(&body, 1 << 30).unwrap();
                             stored
@@ -76,7 +81,7 @@ fn backend() -> (String, Received) {
                                 .lock()
                                 .unwrap()
                                 .push(serde_json::from_slice(&json).unwrap());
-                            StatusCode::NO_CONTENT
+                            StatusCode::NO_CONTENT.into_response()
                         }
                     }),
                 );
@@ -202,4 +207,10 @@ fn signs_its_pushes_with_its_key() {
     pusher.step();
     assert!(pusher.wanted);
     assert!(received.pushes().is_empty());
+    // told why, as the backend tells it
+    let failing = pusher.failing().unwrap();
+    assert!(
+        failing.contains("401") && failing.contains("not the key of the backend"),
+        "{failing}"
+    );
 }

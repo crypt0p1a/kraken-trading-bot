@@ -22,8 +22,9 @@ pub struct Environment {
     /// KRAKEN_BOT_PUSH_URL, its web backend (kraken-dashboard-web): what the dashboard shows is
     /// pushed there at each tick. Nothing pushed without it
     pub push_url: Option<String>,
-    /// KRAKEN_BOT_PUSH_KEY, required with KRAKEN_BOT_PUSH_URL: the pushes are signed with it, the
-    /// backend knowing it too (its KRAKEN_DASHBOARD_WEB_PUSH_KEY). Never sent
+    /// KRAKEN_BOT_PUSH_KEY, needed with KRAKEN_BOT_PUSH_URL: the pushes are signed with it, the
+    /// backend knowing it too (its KRAKEN_DASHBOARD_WEB_PUSH_KEY). Never sent. None when it's missing
+    /// or too short: nothing is pushed, the bot trades all the same ([`Environment::push_problem`])
     pub push_key: Option<String>,
 }
 
@@ -151,20 +152,25 @@ impl Environment {
             ntfy_token: get("KRAKEN_BOT_NTFY_TOKEN").map(str::to_string),
             api_host: get("KRAKEN_BOT_API_HOST").map(str::to_string),
             push_url: get("KRAKEN_BOT_PUSH_URL").map(str::to_string),
-            push_key: match (get("KRAKEN_BOT_PUSH_URL"), get("KRAKEN_BOT_PUSH_KEY")) {
-                (None, _) => None,
-                (Some(_), Some(key)) if key.len() >= SHORTEST_PUSH_KEY => Some(key.to_string()),
-                (Some(_), _) => {
-                    return Err(format!(
-                        "KRAKEN_BOT_PUSH_KEY is required with KRAKEN_BOT_PUSH_URL, {SHORTEST_PUSH_KEY} characters at least, the same in the backend: openssl rand -hex 32"
-                    ));
-                }
-            },
+            push_key: get("KRAKEN_BOT_PUSH_KEY")
+                .filter(|it| it.len() >= SHORTEST_PUSH_KEY)
+                .map(str::to_string),
+        })
+    }
+
+    /// Why nothing is pushed though KRAKEN_BOT_PUSH_URL is set: a dashboard never stops the trades,
+    /// it's told
+    pub fn push_problem(&self) -> Option<String> {
+        (self.push_url.is_some() && self.push_key.is_none()).then(|| {
+            format!(
+                "nothing is pushed: KRAKEN_BOT_PUSH_KEY is needed with KRAKEN_BOT_PUSH_URL, {SHORTEST_PUSH_KEY} characters at least, the same in the backend: openssl rand -hex 32"
+            )
         })
     }
 }
 
-/// KEY=VALUE lines, # comments, values possibly quoted and holding '=' (base64)
+/// KEY=VALUE lines, # comments, values possibly quoted and holding '=' (base64). A comment after an
+/// unquoted value (` # …`) isn't part of it, as Docker Compose reads it: a key and its comment
 pub(crate) fn parse_dotenv(content: &str) -> HashMap<String, String> {
     content
         .lines()
@@ -181,7 +187,7 @@ pub(crate) fn parse_dotenv(content: &str) -> HashMap<String, String> {
                         .strip_prefix('\'')
                         .and_then(|it| it.strip_suffix('\''))
                 })
-                .unwrap_or(value);
+                .unwrap_or_else(|| value.split(" #").next().unwrap_or(value).trim_end());
             (key.trim().to_string(), unquoted.to_string())
         })
         .collect()
@@ -303,27 +309,34 @@ mod tests {
     #[test]
     fn signs_the_pushes_with_a_key_long_enough() {
         let key = push_key();
-        let error = |key: Option<&str>| {
+        let environment = |key: Option<&str>| {
             let mut pairs = vec![
                 ("KRAKEN_API_KEY", "key"),
                 ("KRAKEN_API_SECRET", "c2VjcmV0"),
                 ("KRAKEN_BOT_PUSH_URL", "http://dashboard-web:8080"),
             ];
             pairs.extend(key.map(|it| ("KRAKEN_BOT_PUSH_KEY", it)));
-            Environment::from_variables(&variables(&pairs)).unwrap_err()
+            Environment::from_variables(&variables(&pairs)).unwrap()
         };
+        // without a key, or too short: the bot trades, nothing is pushed, and it's told
         for key in [None, Some(""), Some("short")] {
-            let error = error(key);
-            assert!(error.contains("KRAKEN_BOT_PUSH_KEY is required"), "{error}");
+            let environment = environment(key);
+            assert_eq!(environment.push_key, None);
+            let problem = environment.push_problem().unwrap();
+            assert!(
+                problem.contains("KRAKEN_BOT_PUSH_KEY is needed"),
+                "{problem}"
+            );
         }
-        // no push, no key
+        assert_eq!(environment(Some(&key)).push_problem(), None);
+        // no push, nothing to tell
         let alone = Environment::from_variables(&variables(&[
             ("KRAKEN_API_KEY", "key"),
             ("KRAKEN_API_SECRET", "c2VjcmV0"),
             ("KRAKEN_BOT_PUSH_KEY", key.as_str()),
         ]))
         .unwrap();
-        assert_eq!(alone.push_key, None);
+        assert_eq!(alone.push_problem(), None);
     }
 
     #[test]
@@ -424,6 +437,13 @@ mod tests {
         assert_eq!(parsed["KRAKEN_API_KEY"], "abc");
         assert_eq!(parsed["KRAKEN_API_SECRET"], "c2Vj=cmV0==");
         assert_eq!(parsed["QUOTED"], "x");
+        // a comment after a value, as Docker Compose reads it; a '#' inside a value stays
+        let commented = parse_dotenv(
+            "KRAKEN_BOT_PUSH_KEY=abc # the backend's too\nQUOTED=\"a # b\"\nTOPIC=a#b\n",
+        );
+        assert_eq!(commented["KRAKEN_BOT_PUSH_KEY"], "abc");
+        assert_eq!(commented["QUOTED"], "a # b");
+        assert_eq!(commented["TOPIC"], "a#b");
         assert!(!parsed.contains_key("NO_VALUE"));
     }
 }
