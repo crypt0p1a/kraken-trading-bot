@@ -253,6 +253,9 @@ async fn ticks_until_it_is_asked_to_stop() {
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn pushes_to_the_web_backend() {
+    // the key the pushes are signed with: never written whole, which the scanners of secrets would
+    // take for one
+    let signing = "0123456789abcdef".repeat(2);
     use axum::body::Bytes;
     use axum::http::StatusCode;
     use axum::routing::put;
@@ -265,9 +268,22 @@ async fn pushes_to_the_web_backend() {
     let stored = pushes.clone();
     let router = axum::Router::new().route(
         "/state",
-        put(move |body: Bytes| {
+        put(move |headers: axum::http::HeaderMap, body: Bytes| {
             let stored = stored.clone();
             async move {
+                // signed with the key of the bot, over the body as sent
+                use hmac::{Hmac, Mac};
+                let at = headers["x-kraken-push-at"].to_str().unwrap();
+                let signature = headers["x-kraken-push-signature"].to_str().unwrap();
+                let mut mac =
+                    Hmac::<sha2::Sha256>::new_from_slice("0123456789abcdef".repeat(2).as_bytes())
+                        .unwrap();
+                mac.update(format!("{at}\n").as_bytes());
+                mac.update(&body);
+                let expected = format!("sha256={}", hex::encode(mac.finalize().into_bytes()));
+                if signature != expected {
+                    return StatusCode::UNAUTHORIZED;
+                }
                 let json = gunzip(&body, 1 << 30).unwrap();
                 stored
                     .lock()
@@ -285,6 +301,7 @@ async fn pushes_to_the_web_backend() {
     let server = kraken().await;
     let mut child = bot(&folder, Some(&server.uri()))
         .env("KRAKEN_BOT_PUSH_URL", &backend)
+        .env("KRAKEN_BOT_PUSH_KEY", &signing)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

@@ -59,7 +59,8 @@ docker run --rm -v kraken-trading-bot_kraken-bot-data:/data -v "$PWD:/backup" bu
 
 ## Following the bot from elsewhere
 
-With `KRAKEN_BOT_PUSH_URL` in `.env`, the bot pushes what its dashboard shows to its web backend,
+With `KRAKEN_BOT_PUSH_URL` and `KRAKEN_BOT_PUSH_KEY` in `.env`, the bot pushes what its dashboard
+shows, signed, to its web backend,
 [kraken-dashboard-web](https://github.com/crypt0p1a/kraken-dashboard-web), at each tick: see
 [the web backend](trading-bot.md#web-backend). Without it, nothing goes on the network but the
 calls to Kraken and the notifications.

@@ -9,7 +9,8 @@
 //! Environment (or `.env`): KRAKEN_API_KEY, KRAKEN_API_SECRET, KRAKEN_BOT_CONFIG,
 //! KRAKEN_BOT_DATABASE, RUST_LOG. For several Kraken accounts, trading the same managers:
 //! KRAKEN_BOT_ACCOUNTS=main,alice and KRAKEN_API_KEY_ALICE, KRAKEN_API_SECRET_ALICE. What the
-//! dashboard shows is pushed to KRAKEN_BOT_PUSH_URL at each tick, when it's set
+//! dashboard shows is pushed to KRAKEN_BOT_PUSH_URL at each tick, when it's set, signed with
+//! KRAKEN_BOT_PUSH_KEY
 
 use kraken_spot_api::{RateLimiter, RestOptions};
 use kraken_trading_bot::bot::{Bot, Outcome};
@@ -115,10 +116,10 @@ async fn run(mode: Mode) -> Result<(), String> {
     }
 
     // the ticks of every account, pushed at the end of each: a loop of the bot only
-    let (ticked, pushing) = match &environment.push_url {
-        Some(url) if mode == Mode::Loop => {
+    let (ticked, pushing) = match (&environment.push_url, &environment.push_key) {
+        (Some(url), Some(key)) if mode == Mode::Loop => {
             tracing::info!(url = %pusher::redacted(url), "what the dashboard shows is pushed at each tick");
-            let (ticked, running) = pusher::spawn(url, &environment.database_path)?;
+            let (ticked, running) = pusher::spawn(url, key, &environment.database_path)?;
             (Some(ticked), Some(running))
         }
         _ => (None, None),

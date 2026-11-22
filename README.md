@@ -60,8 +60,9 @@ docker compose exec kraken-trading-bot kraken-dashboard   # the dashboard, q to 
 | `docker compose stop` | stops the bot once its tick ended |
 | `git pull && docker compose up -d --build` | a new version, on the same database |
 
-To follow the bot from elsewhere, `KRAKEN_BOT_PUSH_URL` in `.env` pushes what its dashboard shows
-to [kraken-dashboard-web](https://github.com/crypt0p1a/kraken-dashboard-web) at each tick.
+To follow the bot from elsewhere, `KRAKEN_BOT_PUSH_URL` and `KRAKEN_BOT_PUSH_KEY` in `.env` push
+what its dashboard shows, signed, to
+[kraken-dashboard-web](https://github.com/crypt0p1a/kraken-dashboard-web) at each tick.
 
 ## Documentation
 

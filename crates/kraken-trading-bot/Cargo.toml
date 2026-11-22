@@ -22,8 +22,11 @@ kraken-spot-api.workspace = true
 trading-notify.workspace = true
 rusqlite.workspace = true
 rust_decimal.workspace = true
-# the pusher, on a thread of its own: blocking, never on the ticks
+# the pusher, on a thread of its own: blocking, never on the ticks; its pushes signed
+hex.workspace = true
+hmac.workspace = true
 reqwest = { workspace = true, features = ["blocking"] }
+sha2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_norway.workspace = true

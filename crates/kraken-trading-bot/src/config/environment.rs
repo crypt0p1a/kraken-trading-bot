@@ -22,7 +22,13 @@ pub struct Environment {
     /// KRAKEN_BOT_PUSH_URL, its web backend (kraken-dashboard-web): what the dashboard shows is
     /// pushed there at each tick. Nothing pushed without it
     pub push_url: Option<String>,
+    /// KRAKEN_BOT_PUSH_KEY, required with KRAKEN_BOT_PUSH_URL: the pushes are signed with it, the
+    /// backend knowing it too (its KRAKEN_DASHBOARD_WEB_PUSH_KEY). Never sent
+    pub push_key: Option<String>,
 }
+
+/// The shortest key the pushes are signed with: `openssl rand -hex 32` gives 64 characters
+pub const SHORTEST_PUSH_KEY: usize = 32;
 
 /// A Kraken account and its API key. All of them run the same managers
 #[derive(Clone, PartialEq)]
@@ -72,6 +78,7 @@ impl std::fmt::Debug for Environment {
                 "push_url",
                 &self.push_url.as_deref().map(crate::pusher::redacted),
             )
+            .field("push_key", &self.push_key.as_ref().map(|_| "***"))
             .finish()
     }
 }
@@ -144,6 +151,15 @@ impl Environment {
             ntfy_token: get("KRAKEN_BOT_NTFY_TOKEN").map(str::to_string),
             api_host: get("KRAKEN_BOT_API_HOST").map(str::to_string),
             push_url: get("KRAKEN_BOT_PUSH_URL").map(str::to_string),
+            push_key: match (get("KRAKEN_BOT_PUSH_URL"), get("KRAKEN_BOT_PUSH_KEY")) {
+                (None, _) => None,
+                (Some(_), Some(key)) if key.len() >= SHORTEST_PUSH_KEY => Some(key.to_string()),
+                (Some(_), _) => {
+                    return Err(format!(
+                        "KRAKEN_BOT_PUSH_KEY is required with KRAKEN_BOT_PUSH_URL, {SHORTEST_PUSH_KEY} characters at least, the same in the backend: openssl rand -hex 32"
+                    ));
+                }
+            },
         })
     }
 }
@@ -175,6 +191,12 @@ pub(crate) fn parse_dotenv(content: &str) -> HashMap<String, String> {
 mod tests {
     use super::*;
 
+    /// A key to sign the pushes with, long enough: never written whole, which the scanners of
+    /// secrets would take for one
+    fn push_key() -> String {
+        "0123456789abcdef".repeat(2)
+    }
+
     fn variables(pairs: &[(&str, &str)]) -> HashMap<String, String> {
         pairs
             .iter()
@@ -184,6 +206,7 @@ mod tests {
 
     #[test]
     fn reads_the_credentials_and_the_paths() {
+        let key = push_key();
         let environment = Environment::from_variables(&variables(&[
             ("KRAKEN_API_KEY", "key"),
             ("KRAKEN_API_SECRET", "c2VjcmV0"),
@@ -191,8 +214,10 @@ mod tests {
             ("KRAKEN_BOT_DATABASE", "/data/bot.sqlite"),
             ("KRAKEN_BOT_API_HOST", "http://127.0.0.1:8080"),
             ("KRAKEN_BOT_PUSH_URL", "http://dashboard-web:8080"),
+            ("KRAKEN_BOT_PUSH_KEY", key.as_str()),
         ]))
         .unwrap();
+        assert_eq!(environment.push_key, Some(key));
         assert_eq!(
             environment.push_url.as_deref(),
             Some("http://dashboard-web:8080")
@@ -252,6 +277,10 @@ mod tests {
             ("KRAKEN_BOT_NTFY_TOPIC", "the-topic"),
             ("KRAKEN_BOT_NTFY_TOKEN", "the-token"),
             ("KRAKEN_BOT_PUSH_URL", push_url.as_str()),
+            (
+                "KRAKEN_BOT_PUSH_KEY",
+                "the-push-key-the-push-key-the-push-key",
+            ),
         ]))
         .unwrap();
         assert_eq!(environment.ntfy_topic.as_deref(), Some("the-topic"));
@@ -265,9 +294,36 @@ mod tests {
             "the-topic",
             "the-token",
             "the-password",
+            "the-push-key",
         ] {
             assert!(!printed.contains(secret), "{printed}");
         }
+    }
+
+    #[test]
+    fn signs_the_pushes_with_a_key_long_enough() {
+        let key = push_key();
+        let error = |key: Option<&str>| {
+            let mut pairs = vec![
+                ("KRAKEN_API_KEY", "key"),
+                ("KRAKEN_API_SECRET", "c2VjcmV0"),
+                ("KRAKEN_BOT_PUSH_URL", "http://dashboard-web:8080"),
+            ];
+            pairs.extend(key.map(|it| ("KRAKEN_BOT_PUSH_KEY", it)));
+            Environment::from_variables(&variables(&pairs)).unwrap_err()
+        };
+        for key in [None, Some(""), Some("short")] {
+            let error = error(key);
+            assert!(error.contains("KRAKEN_BOT_PUSH_KEY is required"), "{error}");
+        }
+        // no push, no key
+        let alone = Environment::from_variables(&variables(&[
+            ("KRAKEN_API_KEY", "key"),
+            ("KRAKEN_API_SECRET", "c2VjcmV0"),
+            ("KRAKEN_BOT_PUSH_KEY", key.as_str()),
+        ]))
+        .unwrap();
+        assert_eq!(alone.push_key, None);
     }
 
     #[test]

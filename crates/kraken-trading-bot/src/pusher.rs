@@ -4,6 +4,9 @@
 //! kraken-dashboard-data), as soon as the bot starts, at the end of each tick, and when a forced
 //! tick starts. Read only: nothing comes back from the backend.
 //!
+//! Each push is signed with KRAKEN_BOT_PUSH_KEY, which the backend knows too, never sent: the
+//! backend takes the pushes of the bot only ([`sign`]).
+//!
 //! On a thread of its own, with a connection of its own: the backend away or slow, the ticks go on,
 //! never waiting for it. A push which failed is tried again, the last state only.
 
@@ -13,6 +16,22 @@ use kraken_dashboard_data::wire::{self, Push};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::Duration;
+
+/// When the bot signed a push, UTC milliseconds
+pub const SIGNED_AT: &str = "x-kraken-push-at";
+/// The signature of a push: `sha256=` and the HMAC-SHA256 in hex
+pub const SIGNATURE: &str = "x-kraken-push-signature";
+
+/// The signature of a push signed at `at`: HMAC-SHA256 of the key over `"<at>\n"` and the body as
+/// sent, compressed. kraken-dashboard-web checks it the same way
+pub fn sign(key: &[u8], at: i64, body: &[u8]) -> String {
+    use hmac::{Hmac, Mac};
+    // HMAC takes a key of any length
+    let mut mac = Hmac::<sha2::Sha256>::new_from_slice(key).expect("a key of any length");
+    mac.update(format!("{at}\n").as_bytes());
+    mac.update(body);
+    format!("sha256={}", hex::encode(mac.finalize().into_bytes()))
+}
 
 /// A push which failed is tried again this often, until it works
 pub const RETRY: Duration = Duration::from_secs(30);
@@ -52,15 +71,15 @@ impl Running {
 /// Pushes to the backend at `url` from the database at `path`, on a thread of its own, at once and
 /// then at each [`Ticked`], until every one is dropped: then what's left to push is pushed, and the
 /// thread ends
-pub fn spawn(url: &str, path: &Path) -> Result<(Ticked, Running), String> {
+pub fn spawn(url: &str, key: &str, path: &Path) -> Result<(Ticked, Running), String> {
     check(url)?;
-    let (url, path) = (url.to_string(), path.to_path_buf());
+    let (url, key, path) = (url.to_string(), key.to_string(), path.to_path_buf());
     let (sender, receiver) = mpsc::channel();
     let thread = std::thread::Builder::new()
         .name("pusher".into())
         .spawn(move || {
             // its client blocks: made out of the runtime of the ticks, which it would stop
-            let mut pusher = match Pusher::new(&url, &path) {
+            let mut pusher = match Pusher::new(&url, &key, &path) {
                 Ok(pusher) => pusher,
                 Err(error) => {
                     tracing::error!(%error, "nothing is pushed to the web backend");
@@ -137,6 +156,8 @@ pub struct Pusher {
     state: String,
     /// As it's logged
     shown: String,
+    /// What the pushes are signed with
+    key: Vec<u8>,
     client: reqwest::blocking::Client,
     path: PathBuf,
     /// Opened at the first push: the bot creates the database before
@@ -149,7 +170,7 @@ pub struct Pusher {
 
 impl Pusher {
     /// Not inside a tokio runtime: its client blocks. A push wanted at once
-    pub fn new(url: &str, path: &Path) -> Result<Self, String> {
+    pub fn new(url: &str, key: &str, path: &Path) -> Result<Self, String> {
         check(url)?;
         let client = reqwest::blocking::Client::builder()
             .timeout(TIMEOUT)
@@ -159,6 +180,7 @@ impl Pusher {
         Ok(Self {
             shown: redacted(&state),
             state,
+            key: key.as_bytes().to_vec(),
             client,
             path: path.to_path_buf(),
             database: None,
@@ -198,11 +220,16 @@ impl Pusher {
             views: wire::views(database, at)?,
         };
         let json = serde_json::to_vec(&push).map_err(|error| error.to_string())?;
+        let body = wire::gzip(&json);
+        // signed as it's sent, compressed
+        let signed_at = now_millis();
         self.client
             .put(&self.state)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .header(reqwest::header::CONTENT_ENCODING, "gzip")
-            .body(wire::gzip(&json))
+            .header(SIGNED_AT, signed_at.to_string())
+            .header(SIGNATURE, sign(&self.key, signed_at, &body))
+            .body(body)
             .send()
             .and_then(|it| it.error_for_status())
             // its text holds the URL: without it
@@ -238,6 +265,24 @@ mod tests {
             assert!(error.contains("KRAKEN_BOT_PUSH_URL"), "{error}");
             assert!(!error.contains("abc"), "{error}");
         }
+    }
+
+    /// The value kraken-dashboard-web checks, HMAC-SHA256 of RFC 4231, test case 2: the key
+    /// "Jefe", over "what do ya want for nothing?"
+    #[test]
+    fn signs_as_the_backend_checks() {
+        let body = b"what do ya want for nothing?";
+        // the time first: a body without it, signed at 0, is another message
+        assert_ne!(sign(b"Jefe", 0, body), sign(b"Jefe", 1, body));
+        use hmac::{Hmac, Mac};
+        let mut mac = Hmac::<sha2::Sha256>::new_from_slice(b"Jefe").unwrap();
+        mac.update(body);
+        assert_eq!(
+            hex::encode(mac.finalize().into_bytes()),
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
+        assert!(sign(b"Jefe", 1, body).starts_with("sha256="));
+        assert_eq!(sign(b"Jefe", 1, body).len(), "sha256=".len() + 64);
     }
 
     #[test]

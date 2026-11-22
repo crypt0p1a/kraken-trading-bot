@@ -8,6 +8,34 @@ use kraken_trading_bot::storage::{FORCED_TICK, Storage};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+/// The key the bot and the backend of the tests share: never written whole, which the scanners of
+/// secrets would take for one
+fn key() -> String {
+    "0123456789abcdef".repeat(2)
+}
+
+/// The signature of a push, as kraken-dashboard-web checks it: HMAC-SHA256 of the key over the time
+/// it was signed and the body as sent
+fn signed_by_the_bot(headers: &axum::http::HeaderMap, body: &[u8]) -> bool {
+    use hmac::{Hmac, Mac};
+    let (Some(at), Some(signature)) = (
+        headers
+            .get("x-kraken-push-at")
+            .and_then(|it| it.to_str().ok()),
+        headers
+            .get("x-kraken-push-signature")
+            .and_then(|it| it.to_str().ok())
+            .and_then(|it| it.strip_prefix("sha256="))
+            .and_then(|it| hex::decode(it).ok()),
+    ) else {
+        return false;
+    };
+    let mut mac = Hmac::<sha2::Sha256>::new_from_slice(key().as_bytes()).unwrap();
+    mac.update(format!("{at}\n").as_bytes());
+    mac.update(body);
+    mac.verify_slice(&signature).is_ok()
+}
+
 /// What the backend of the tests received, in order
 #[derive(Clone, Default)]
 struct Received(Arc<Mutex<Vec<Push>>>);
@@ -37,8 +65,11 @@ fn backend() -> (String, Received) {
                     put(move |headers: HeaderMap, body: Bytes| {
                         let stored = stored.clone();
                         async move {
-                            // compressed, always
+                            // compressed and signed, always
                             assert_eq!(headers["content-encoding"], "gzip");
+                            if !signed_by_the_bot(&headers, &body) {
+                                return StatusCode::UNAUTHORIZED;
+                            }
                             let json = gunzip(&body, 1 << 30).unwrap();
                             stored
                                 .0
@@ -85,7 +116,7 @@ fn pushes_every_screen_of_the_database() {
     let fixture = Fixture::new("screens");
     let storage = Storage::open(&fixture.0).unwrap();
     // a trailing / of the URL is the same backend
-    let mut pusher = Pusher::new(&format!("{url}/"), &fixture.0).unwrap();
+    let mut pusher = Pusher::new(&format!("{url}/"), &key(), &fixture.0).unwrap();
 
     // wanted at once: the bot started
     assert!(pusher.wanted);
@@ -131,7 +162,7 @@ fn pushes_again_once_the_backend_is_back() {
         .local_addr()
         .unwrap()
         .port();
-    let mut pusher = Pusher::new(&format!("http://127.0.0.1:{port}"), &fixture.0).unwrap();
+    let mut pusher = Pusher::new(&format!("http://127.0.0.1:{port}"), &key(), &fixture.0).unwrap();
     pusher.step();
     // the last state is pushed at the next try
     assert!(pusher.wanted);
@@ -141,7 +172,7 @@ fn pushes_again_once_the_backend_is_back() {
 fn waits_for_the_database_of_the_bot() {
     let (url, received) = backend();
     let fixture = Fixture::new("missing");
-    let mut pusher = Pusher::new(&url, &fixture.0).unwrap();
+    let mut pusher = Pusher::new(&url, &key(), &fixture.0).unwrap();
     pusher.step();
     assert!(pusher.wanted);
     assert!(received.pushes().is_empty());
@@ -154,6 +185,21 @@ fn waits_for_the_database_of_the_bot() {
 #[test]
 fn refuses_what_isnt_an_http_url() {
     let fixture = Fixture::new("url");
-    let error = Pusher::new("dashboard-web:8080", &fixture.0).err().unwrap();
+    let error = Pusher::new("dashboard-web:8080", &key(), &fixture.0)
+        .err()
+        .unwrap();
     assert!(error.contains("KRAKEN_BOT_PUSH_URL"), "{error}");
+}
+
+/// A push not signed with the key of the backend is refused: told, and pushed again
+#[test]
+fn signs_its_pushes_with_its_key() {
+    let (url, received) = backend();
+    let fixture = Fixture::new("key");
+    let _storage = Storage::open(&fixture.0).unwrap();
+    let mut pusher =
+        Pusher::new(&url, "another key, which isn't the backend's", &fixture.0).unwrap();
+    pusher.step();
+    assert!(pusher.wanted);
+    assert!(received.pushes().is_empty());
 }
