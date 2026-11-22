@@ -37,23 +37,41 @@ client of [kraken-rust](https://github.com/crypt0p1a/kraken-rust), from crates.i
 - **A web backend**, optional: what the dashboard shows pushed at each tick to
   [kraken-dashboard-web](https://github.com/crypt0p1a/kraken-dashboard-web), to follow the bot
   from elsewhere
-- **A Docker image** for amd64 and arm64; `--check` tells when the API key could withdraw funds
+- **Docker first**: an image for amd64 and arm64, a single service; `--check` tells when the API
+  key could withdraw funds
 
 ## Quick start
 
-It needs a Kraken account and an API key of it. No account yet? The 🐙 Kraken badge above is
-[my invitation link](https://invite.kraken.com/JDNW/iuba05c7), a referral link.
+It needs Docker with Compose, a Kraken account and an API key of it. No account yet? The 🐙 Kraken
+badge above is [my invitation link](https://invite.kraken.com/JDNW/iuba05c7), a referral link.
 
 ```sh
 cp managers.example.yaml managers.yaml   # the managers: a dry run until dry_run: false
 cp .env.example .env                     # the Kraken API key, never with Withdraw Funds
-docker compose up -d --build
-docker compose logs -f
-docker compose exec kraken-trading-bot kraken-dashboard   # the dashboard, in the terminal
+docker compose up -d --build             # the bot, in the background
+docker compose exec kraken-trading-bot kraken-dashboard   # the dashboard, q to quit
 ```
 
-Everything else, from the configuration to the database, is in the
-[documentation of the bot](docs/trading-bot.md).
+| Every day | |
+|-----------|-|
+| `docker compose logs -f` | the logs of the bot |
+| `docker compose run --rm kraken-trading-bot --check` | checks the configuration, the pairs and the API key, places nothing |
+| `docker compose restart` | after a change of `managers.yaml` or `.env` |
+| `docker compose stop` | stops the bot once its tick ended |
+| `git pull && docker compose up -d --build` | a new version, on the same database |
+
+To follow the bot from elsewhere, `KRAKEN_BOT_PUSH_URL` in `.env` pushes what its dashboard shows
+to [kraken-dashboard-web](https://github.com/crypt0p1a/kraken-dashboard-web) at each tick.
+
+## Documentation
+
+Everything else is in [`doc/`](doc/README.md):
+
+- [Docker](doc/docker.md): the volumes, the database, keeping the machine awake
+- [The bot](doc/trading-bot.md): the strategy, the configuration, several accounts, the virtual
+  managers, the notifications, the web backend, the database
+- [The dashboard](doc/dashboard.md): its panels and its keys
+- [Development](doc/development.md): the crates, running it with cargo, the tests
 
 ## Screenshots
 
@@ -67,67 +85,6 @@ The dashboard on its demo database, 7 days of a simulated market traded by the s
 |---|---|
 | ![The markets: the first pair of the YAML file, its price, candles, returns, levels, volume, spread, volatility, drawdown](assets/screenshots/markets.svg) | |
 
-They're drawn, not taken: `scripts/screenshots.sh` renders the screens of the dashboard as SVG
-images in `assets/screenshots`, from the demo database. Run it before a release, and whenever a
-screen changes.
-
-## Keeping the machine awake
-
-The bot runs in Docker: while the machine sleeps, it's frozen and places nothing, its orders
-already on Kraken staying there. It catches up at the first tick after the wake up. To keep the
-machine awake while it runs:
-
-```sh
-# macOS: no sleep as long as the command runs (-i: idle, -s: on mains power), the screen may turn off
-caffeinate -is docker compose logs -f
-caffeinate -is docker compose exec kraken-trading-bot kraken-dashboard
-
-# macOS: never on mains power, until it's set back (`pmset -g` shows the current value first)
-sudo pmset -c sleep 0
-
-# Linux (systemd): no sleep as long as the command runs
-systemd-inhibit --what=idle:sleep --why="kraken-trading-bot" docker compose logs -f
-
-# Windows (PowerShell, as administrator): never on mains power, until it's set back
-powercfg /change standby-timeout-ac 0
-```
-
-Closing the lid of a laptop still puts it to sleep, unless it's on mains power with an external
-screen. A machine that never sleeps, a small server, is the right place for a bot trading real
-money.
-
-## Crates
-
-```text
-crates/
-├── kraken-trading-bot     the bot: managers, strategy, SQLite database (executable, Docker)
-├── kraken-dashboard       its dashboard in the terminal (ratatui), live from its database
-├── kraken-dashboard-data  what the dashboard shows, read from the database (shared, serializable)
-└── trading-notify         notifications of a trading bot through ntfy, in several languages
-```
-
-| Crate | What's in it |
-|-------|--------------|
-| `kraken-trading-bot` | the [managers](docs/trading-bot.md#configuration), [several accounts](docs/trading-bot.md#several-accounts), [virtual managers](docs/trading-bot.md#virtual-managers), the [indicators of the market](docs/trading-bot.md#indicators-of-the-market), the [database](docs/trading-bot.md#database) and what's pushed to the [web backend](docs/trading-bot.md#web-backend) |
-| `kraken-dashboard` | the [dashboard](docs/trading-bot.md#dashboard): P&L, managers, orders, markets, decisions, charts and heatmaps |
-| `kraken-dashboard-data` | what the dashboard shows, read from the database of the bot, as JSON too: shared by the dashboard and the bot |
-| `trading-notify` | the [notifications](docs/trading-bot.md#notifications): languages, texts, sending through ntfy |
-
-## Development
-
-```sh
-git config core.hooksPath .githooks   # refuses a commit holding a secret (gitleaks)
-cargo test --workspace                # the offline tests
-cargo run -p kraken-trading-bot -- --check   # checks the configuration, the pairs and the API keys
-```
-
-The [CI](docs/ci.md) runs the tests on Linux, macOS and Windows, the coverage, the secret
-scanners and the Docker image.
-
-## History
-
-The bot started in [kraken-rust](https://github.com/crypt0p1a/kraken-rust), next to the Kraken
-client. Its commits were moved here one by one, with their messages, authors and dates.
 
 ## Disclaimer
 
