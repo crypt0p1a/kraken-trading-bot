@@ -13,7 +13,7 @@ services:
     image: kraken-trading-bot
     container_name: kraken-trading-bot
     restart: unless-stopped
-    # KRAKEN_API_KEY, KRAKEN_API_SECRET
+    # KRAKEN_API_KEY, KRAKEN_API_SECRET; KRAKEN_BOT_PUSH_URL, its web backend
     env_file: .env
     environment:
       RUST_LOG: info

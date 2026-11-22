@@ -8,13 +8,15 @@
 //!
 //! Environment (or `.env`): KRAKEN_API_KEY, KRAKEN_API_SECRET, KRAKEN_BOT_CONFIG,
 //! KRAKEN_BOT_DATABASE, RUST_LOG. For several Kraken accounts, trading the same managers:
-//! KRAKEN_BOT_ACCOUNTS=main,alice and KRAKEN_API_KEY_ALICE, KRAKEN_API_SECRET_ALICE
+//! KRAKEN_BOT_ACCOUNTS=main,alice and KRAKEN_API_KEY_ALICE, KRAKEN_API_SECRET_ALICE. What the
+//! dashboard shows is pushed to KRAKEN_BOT_PUSH_URL at each tick, when it's set
 
 use kraken_spot_api::{RateLimiter, RestOptions};
 use kraken_trading_bot::bot::{Bot, Outcome};
 use kraken_trading_bot::clock::now_millis;
 use kraken_trading_bot::config::{AccountKey, BotConfig, Environment};
 use kraken_trading_bot::exchange::KrakenExchange;
+use kraken_trading_bot::pusher::{self, Ticked};
 use kraken_trading_bot::storage::{FORCED_TICK, Storage};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -27,6 +29,11 @@ use trading_notify::Notifier;
 
 /// How often a tick asked for from outside (the dashboard) is looked for, between two ticks
 const COMMAND_POLL: Duration = Duration::from_secs(10);
+
+/// The push of the last tick to the web backend, waited for this long at most when the bot stops:
+/// a push under way, then the last one, each a read of the database and a request of
+/// `pusher::TIMEOUT` at most. docker stop waits a minute
+const LAST_PUSH: Duration = Duration::from_secs(25);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Mode {
@@ -107,14 +114,26 @@ async fn run(mode: Mode) -> Result<(), String> {
         return check_keys(&bots).await;
     }
 
+    // the ticks of every account, pushed at the end of each: a loop of the bot only
+    let (ticked, pushing) = match &environment.push_url {
+        Some(url) if mode == Mode::Loop => {
+            tracing::info!(url = %pusher::redacted(url), "what the dashboard shows is pushed at each tick");
+            let (ticked, running) = pusher::spawn(url, &environment.database_path)?;
+            (Some(ticked), Some(running))
+        }
+        _ => (None, None),
+    };
+
     let (stop, stopped) = watch::channel(false);
     // on one thread: a connection to SQLite can't be shared between threads, and a tick waits for
     // Kraken most of the time
-    LocalSet::new()
+    let result = LocalSet::new()
         .run_until(async move {
             let mut accounts = JoinSet::new();
             for (bot, span) in bots {
-                accounts.spawn_local(trade(bot, mode, stopped.clone()).instrument(span));
+                accounts.spawn_local(
+                    trade(bot, mode, stopped.clone(), ticked.clone()).instrument(span),
+                );
             }
             let mut shutdown = std::pin::pin!(shutdown());
             let mut asked = false;
@@ -139,7 +158,15 @@ async fn run(mode: Mode) -> Result<(), String> {
                 }
             }
         })
-        .await
+        .await;
+    // every account stopped as asked, none of them ticks anymore: the push of the last tick. Not
+    // when an account failed: the bot is started again at once
+    if let Some(pushing) = pushing
+        && result.is_ok()
+    {
+        let _ = tokio::task::spawn_blocking(move || pushing.wait(LAST_PUSH)).await;
+    }
+    result
 }
 
 /// The API key of each account, all of them told about before failing. Nothing is placed
@@ -194,7 +221,12 @@ async fn prepared(
 }
 
 /// The ticks of an account, until it's asked to stop: the tick in progress ends first
-async fn trade(mut bot: Bot<KrakenExchange>, mode: Mode, mut stopped: watch::Receiver<bool>) {
+async fn trade(
+    mut bot: Bot<KrakenExchange>,
+    mode: Mode,
+    mut stopped: watch::Receiver<bool>,
+    ticked: Option<Ticked>,
+) {
     bot.notify_started().await;
 
     let interval = bot.config().tick_interval;
@@ -224,6 +256,10 @@ async fn trade(mut bot: Bot<KrakenExchange>, mode: Mode, mut stopped: watch::Rec
         if let Err(error) = bot.storage().end_command(FORCED_TICK, now_millis()) {
             tracing::warn!(%error, "the forced tick couldn't be ended");
         }
+        // the web backend sees it, the forced tick ended
+        if let Some(ticked) = &ticked {
+            ticked.notify();
+        }
 
         if mode == Mode::Once || *stopped.borrow() {
             return;
@@ -246,6 +282,10 @@ async fn trade(mut bot: Bot<KrakenExchange>, mode: Mode, mut stopped: watch::Rec
             match bot.storage().start_command(FORCED_TICK, now_millis()) {
                 Ok(true) => {
                     tracing::info!("tick forced");
+                    // the web backend sees it under way
+                    if let Some(ticked) = &ticked {
+                        ticked.notify();
+                    }
                     break;
                 }
                 Ok(false) => {}

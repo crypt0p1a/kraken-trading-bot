@@ -16,7 +16,7 @@ manager only spends its own money, and only what the account has.
 
 ## Prerequisites
 
-- Docker with Compose, or [rustup](https://rustup.rs) to run it with cargo
+- Docker with Compose ([Docker](docker.md)), or [rustup](https://rustup.rs) to run it with cargo ([development](development.md))
 - a Kraken API key with the Query Funds, Query Open Orders & Trades, Query Closed Orders & Trades
   and Create & Modify Orders permissions, never Withdraw Funds
 
@@ -62,6 +62,7 @@ managers:
 | `KRAKEN_BOT_DATABASE` | `kraken-bot.sqlite` | the SQLite database |
 | `KRAKEN_BOT_NTFY_TOPIC`, `KRAKEN_BOT_NTFY_TOKEN` | | the [notifications](#notifications) |
 | `KRAKEN_BOT_API_HOST` | `https://api.kraken.com` | another host speaking the API of Kraken: a mocked Kraken in the tests |
+| `KRAKEN_BOT_PUSH_URL` | | its [web backend](#web-backend): what the dashboard shows is pushed there at each tick |
 | `RUST_LOG` | `info` | |
 
 ## Several accounts
@@ -172,85 +173,26 @@ They're logged (`indicators`, with a trend: rising, falling or mixed) and record
 there to see what they say before tying `buy_below` to the volatility or pausing the buys in a
 falling market. A failure to read the candles is only logged.
 
-## Running it
+## Web backend
 
-```sh
-cp managers.example.yaml managers.yaml   # then edit it
-cp .env.example .env                     # then fill the key and secret
-docker compose up -d --build
-docker compose logs -f
-```
+To follow the bot from elsewhere than its machine, it pushes what its dashboard shows to
+[kraken-dashboard-web](https://github.com/crypt0p1a/kraken-dashboard-web), its web backend, when
+`.env` sets `KRAKEN_BOT_PUSH_URL` (e.g. `http://dashboard-web:8080`). Without it, nothing is
+pushed, nothing goes on the network.
 
-The image holds only the binaries of the bot and of its [dashboard](#dashboard) (distroless, non-root): `managers.yaml` is mounted
-read-only in `/config`, the database lives in the `kraken-bot-data` volume (`/data`). `docker
-compose stop` lets the tick in progress end.
+- **What**: every screen of the dashboard, read from the database as the dashboard reads it
+  and bucketed: each range (1H, 24H, 7D, 30D, ALL) of all the accounts added up, and of each
+  account when there are several. `PUT /state`, JSON compressed with gzip
+  (`Content-Encoding: gzip`): for the demo database (8 managers, 3 pairs, 7 days), 3.1 MB of JSON,
+  about 720 KB pushed.
+- **When**: as soon as the bot starts (the last state of its database), at the end of each tick,
+  and when a forced tick starts.
+- **Read only**: nothing comes back from the backend to the bot.
+- **Never in the way**: the pusher has a thread and a connection of its own. The backend away or
+  slow, the bot goes on trading, says so once in its logs, and pushes its last state again every 30
+  seconds until the backend is back. Stopping, it pushes its last tick, 25 seconds at most.
 
-Without Docker: `cargo run --release -p kraken-trading-bot` (or `-- --once` for a single tick,
-`-- --check` to only check the configuration, the pairs and the API keys: their permissions, none
-that withdraws. Nothing is placed).
-
-## Dashboard
-
-`kraken-dashboard` follows the bot in the terminal (ratatui), live from its
-[database](#database), opened **read only**: it never touches Kraken. Its only write is `t`, a
-tick of the bot asked for in the `commands` table.
-
-```sh
-docker compose exec kraken-trading-bot kraken-dashboard   # in the container of the bot
-cargo run --release -p kraken-dashboard -- kraken-bot.sqlite   # on a copy of the database
-```
-
-| Panel | Content |
-|-------|---------|
-| header | LIVE or DRY RUN (from the last order), TICK ASKED then TICKING once `t` is pressed, the time since the last tick (STALE after 30 min), the UTC clock, the prices of the pairs scrolling |
-| tiles | portfolio: the whole account, what the managers are worth and the money they don't use (equity of the manager when focused on one), target: what the account would be worth once every open buy filled and every position sold for what it cost + `sell_above`%, fees included, P&L (value - budget), realized by the sells, unrealized, 1 month, 3 months and 1 year: what the sells earned per day since the first order carried on as it is, without compounding, the gains of a manager not funding others. For fun rather than a forecast: unrealistic on a short history, and a falling market stops the sells. Fees and volume, open orders; the other quote currencies apart |
-| managers | value, P&L, position, entry price and the last price against it, open order, how far the market is from it (`TO FILL`, ▼ the drop a buy waits for, ▲ the rise a sell waits for) and its fill, the trend of the value |
-| charts | a column on the last third of the screen, three charts one above the other (fewer in a low terminal), `c`, `v` and `b` switch the one at the top, in the middle and at the bottom: the P&L over time, the value of the whole account (of the manager when focused on one) with its target, the buys filled (▲), and each sell (▼) with a flag saying what it earned, the sells too close sharing one (`3× +1.02`), the price of the pair with the entry price and the open orders, the P&L of each sell, what the portfolio would be worth if every price moved at once by -10% to +10%: the buys the move reaches filled at their limit, the sells at their target, what the bot would place next not played. Not a forecast |
-| orders | the blotter, without the cost, the fee and then the volume when narrow: side, price, how far the market is from an open order, volume, fill, cost, fee, status |
-| markets | the last price (the range and the spread left out when narrow), 24 hours change, ATR, range and trend of the [indicators](#indicators-of-the-market), the spread |
-| tape | the decisions: orders placed, refused (✗), trailing, virtual managers; `i` shows the idle ones |
-
-The page of the markets, after every chart with `d`, shows one pair at a time, in the order of the YAML file (where its
-first manager is; a pair traded only by virtual managers last; a pair no manager trades anymore, ticks
-left from an older file, left out),
-`←` `→` to the next one:
-
-| Panel | Content |
-|-------|---------|
-| pairs | every pair, its price, its change over the range and its sparkline; the one shown framed |
-| price | the price with the EMAs of the [indicators](#indicators-of-the-market), the VWAP of 24 hours and the buys and the sells filled |
-| quote | last, bid, ask, spread, change, highest and lowest of the range, VWAP, volume, trend, ATR, the managers of the pair and what they hold |
-| position | where the price is between the lowest and the highest of the range, what the managers hold of their budget |
-| candles | open, highest, lowest and close of each period, as many as the width holds |
-| returns | how many times the price moved by how much from a period to the next |
-| levels | the open orders of the managers and what their positions cost, around the last price |
-| volume 24h, spread, volatility, drawdown | over the range: the volume, the spread in bps, the ATR, how far the price is under the highest before it |
-
-What the screen shows is kept from a run to the next: the charts, the range, the account, the
-order of the tables, the screen of every chart, the page of the markets and its pair, the idle decisions and the open orders only. They're
-in `kraken-bot.sqlite.dashboard.json`, next to the database (in the volume `/data` with Docker):
-removing it brings the defaults back. A setting that doesn't fit the database anymore, an account
-gone, keeps its default.
-
-Keys: `d` the next screen, in a circle: every chart, the page of the markets (`←` `→` the pair), the desk again (`esc` back to the desk), `tab` the panel the arrows move in, `←` `→` the column its table is sorted on, `s` the other
-way (the positions and the volumes by what they're worth, a `—` always at the end), `⏎` focus on the manager of the cursor (tiles, charts,
-orders and tape on it alone), `esc` back to all of them, `1`…`5` the range of the charts (1H, 24H,
-7D, 30D, ALL), `o` the open orders only, `r` read the database again, `t` a tick of the bot now,
-`?` the help, `q` quit. The database is checked every 2
-seconds (`--refresh SECONDS`), read again only when the bot wrote it. The P&L realized replays the
-orders as the ledger of the bot does: each sell against the cost of the base it sold, fees included.
-
-A demo database, 7 days of a simulated market traded by the strategy, written by the storage of
-the bot:
-
-```sh
-cargo run -p kraken-dashboard --example demo -- demo.sqlite
-cargo run -p kraken-dashboard -- demo.sqlite
-```
-
-With several accounts, `a` goes through them in a circle: all of them added up (the managers named
-`alice·#7`), then each one alone. `t` asks for a tick of what's shown. An account joining makes the
-curve of the portfolio jump, as a deposit does.
+The backend has nothing authenticated yet: run it on a network of your own only.
 
 ## Notifications
 
@@ -306,24 +248,4 @@ The SQLite database (`/data/kraken-bot.sqlite`) is there to work with what the b
 
 The amounts are stored as text, to stay exact.
 
-```sh
-docker run --rm -v kraken-rust_kraken-bot-data:/data -it keinos/sqlite3 sqlite3 /data/kraken-bot.sqlite \
-  "SELECT id, pair, budget, value, quote_available, base_available FROM managers"
-```
-
-## Tests
-
-- the decisions (planner, ledger, strategy) with the values of the tests of `cex-trading-bot`,
-  including 500 random cycles which must all make money
-- the database, the configuration, the synchronization
-- `scenarios.rs`: the bot tick after tick on a simulated Kraken (fills, expiry, partial fills,
-  closing managers, missing funds, orphans, restart without database, refused orders, dry run,
-  600 ticks of a random market where every cycle makes money, only limit orders)
-- `trailing_buy.rs`: the buys placed again when the price rises, only the ones not filled at all,
-  from the price they were placed from, never in a dry run, a refused cancellation notified
-- `indicators.rs`: the indicators recorded once 12 hours of candles exist
-- `virtual_managers.rs`: the virtual managers on a simulated Kraken (added with the margin,
-  deleted without money or once closed, rebuilt after the loss of the database)
-- `kraken_wiring.rs`: the requests sent to a mocked Kraken
-- `live_dry_run.rs`: one tick on the real Kraken, as a dry run, the history of the account
-  searched for virtual managers
+Read with SQLite from another container: [Docker](docker.md#the-database).

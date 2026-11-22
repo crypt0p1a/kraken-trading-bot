@@ -18,7 +18,13 @@ use std::time::Duration;
 const USAGE: &str = "kraken-dashboard [DATABASE] [--refresh SECONDS]
 
 DATABASE: the database of the bot, KRAKEN_BOT_DATABASE else ./kraken-bot.sqlite
-SECONDS: how often it's checked for a change, 2 by default";
+SECONDS: how often it's checked for a change, 2 by default, from 1 ms to a day";
+
+/// A day at most: a refresh beyond means none, and an infinite one can't be waited for
+const LONGEST_REFRESH: f64 = 86_400.0;
+
+/// A millisecond at least: below, it's 0, and the database is read again and again
+const SHORTEST_REFRESH: f64 = 0.001;
 
 struct Options {
     database: PathBuf,
@@ -35,8 +41,8 @@ fn options(arguments: &[String]) -> Result<Options, String> {
                 let seconds = arguments
                     .next()
                     .and_then(|it| it.parse::<f64>().ok())
-                    .filter(|it| *it > 0.0)
-                    .ok_or("--refresh expects a number of seconds")?;
+                    .filter(|it| (SHORTEST_REFRESH..=LONGEST_REFRESH).contains(it))
+                    .ok_or("--refresh expects a number of seconds, from 1 ms to a day")?;
                 refresh = Duration::from_secs_f64(seconds);
             }
             other if other.starts_with('-') => return Err(format!("unknown option {other}")),

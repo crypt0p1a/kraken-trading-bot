@@ -63,6 +63,22 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked
 
+  # the dashboard in a browser (kraken-dashboard-web): its screen and its logic without the terminal
+  # nor SQLite, compiled to WebAssembly
+  wasm:
+    name: Dashboard in WebAssembly
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: >-
+          cargo clippy --locked -p kraken-dashboard -p kraken-dashboard-data --lib
+          --no-default-features --target wasm32-unknown-unknown -- -D warnings
+
   test:
     name: Tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

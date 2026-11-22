@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
   "crates/kraken-dashboard",
+  "crates/kraken-dashboard-data",
   "crates/kraken-trading-bot",
   "crates/trading-notify",
 ]
@@ -19,6 +20,8 @@ repository = "https://github.com/crypt0p1a/kraken-trading-bot"
 kraken-spot-api = "0.1.0"
 
 # crates of the workspace
+# its types only unless a crate asks for the database: a browser has none
+kraken-dashboard-data = { path = "crates/kraken-dashboard-data", default-features = false }
 kraken-trading-bot = { path = "crates/kraken-trading-bot" }
 trading-notify = { path = "crates/trading-notify" }
 
@@ -37,12 +40,20 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.150"
+# float_roundtrip: a number read back is the number written, what the bot pushes as what it read
+serde_json = { version = "1.0.150", features = ["float_roundtrip"] }
 thiserror = "2.0.18"
 tokio = { version = "1", default-features = false }
 
 # dashboard: the terminal UI, with its crossterm backend
-ratatui = "0.30.2"
+ratatui = { version = "0.30.2", default-features = false, features = ["all-widgets", "layout-cache", "macros", "underline-color"] }
+# Instant and SystemTime, in the terminal as in a browser (std panics there)
+web-time = "1.1.0"
+
+# what the bot pushes to its web backend is compressed
+flate2 = "1.1.10"
 
 # tests only
 wiremock = "0.6.5"
+# a web backend in the tests, receiving what the bot pushes
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }

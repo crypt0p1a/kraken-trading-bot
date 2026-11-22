@@ -1,12 +1,13 @@
 //! The state of the dashboard: what's selected, what's shown, and the keys that change it
 
-use crate::data::{Action, Database, Manager, ManagerKey, Order, account_of, manager_number};
+pub use crate::data::Range;
+use crate::data::{Action, Manager, ManagerKey, Order, Source, account_of, manager_number};
+use crate::keys::{KeyCode, KeyEvent, KeyModifiers};
 use crate::settings::Settings;
 use crate::sort::{self, Sort};
 use crate::stats::{Model, canonical};
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::collections::HashMap;
-use std::time::Instant;
+use web_time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Panel {
@@ -82,66 +83,12 @@ impl Chart {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Range {
-    Hour,
-    Day,
-    Week,
-    Month,
-    All,
-}
-
-impl Range {
-    pub const ALL: [Range; 5] = [Self::Hour, Self::Day, Self::Week, Self::Month, Self::All];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Hour => "1H",
-            Self::Day => "24H",
-            Self::Week => "7D",
-            Self::Month => "30D",
-            Self::All => "ALL",
-        }
-    }
-
-    /// The periods the growth compares in this range, UTC milliseconds: a tick of the bot at most
-    pub fn period(self) -> i64 {
-        const HOUR: i64 = 3_600_000;
-        match self {
-            Self::Hour => 5 * 60_000,
-            Self::Day => HOUR,
-            Self::Week | Self::Month | Self::All => 24 * HOUR,
-        }
-    }
-
-    pub fn period_label(self) -> &'static str {
-        match self {
-            Self::Hour => "5 MIN",
-            Self::Day => "HOUR",
-            Self::Week | Self::Month | Self::All => "DAY",
-        }
-    }
-
-    /// Start of the range, UTC milliseconds: 0 for everything
-    pub fn since(self, now: i64) -> i64 {
-        const HOUR: i64 = 3_600_000;
-        match self {
-            Self::Hour => now - HOUR,
-            Self::Day => now - 24 * HOUR,
-            Self::Week => now - 7 * 24 * HOUR,
-            Self::Month => now - 30 * 24 * HOUR,
-            Self::All => 0,
-        }
-    }
-}
-
 /// Letters of the name of an account before its managers, when the accounts are together
 const ACCOUNT_TAG: usize = 5;
 
 pub fn now_millis() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .map(|it| it.as_millis() as i64)
         .unwrap_or_default()
 }
@@ -218,7 +165,7 @@ impl App {
     }
 
     /// Asks the bot for a tick now, if `t` was pressed
-    pub fn ask_tick(&mut self, database: &Database) {
+    pub fn ask_tick(&mut self, database: &dyn Source) {
         if !std::mem::take(&mut self.tick_asked) {
             return;
         }
@@ -228,8 +175,9 @@ impl App {
         }
     }
 
-    /// Reads the database again when the bot wrote it, or when `force`
-    pub fn refresh(&mut self, database: &Database, force: bool) {
+    /// Reads the database again when the bot wrote it (what the bot pushed, on the web), or when
+    /// `force`
+    pub fn refresh(&mut self, database: &dyn Source, force: bool) {
         let version = match database.data_version() {
             Ok(version) => version,
             Err(error) => {
@@ -241,13 +189,16 @@ impl App {
             return;
         }
         let now = now_millis();
-        match database.load(self.range.since(now), now, self.view) {
+        match database.load_range(self.range, now, self.view) {
             Ok(data) => {
                 let view_changed = std::mem::take(&mut self.view_changed);
                 let followed = self.selected().filter(|_| !view_changed).map(|it| it.id);
+                // what's shown is as old as what was read: on the web, what the bot read at its
+                // last tick
+                let read_at = data.at;
                 self.model = Model::new(data);
                 self.data_version = Some(version);
-                self.loaded_at = now;
+                self.loaded_at = if read_at > 0 { read_at } else { now };
                 self.error = None;
                 self.sort_managers(followed);
             }
@@ -513,7 +464,8 @@ impl App {
     }
 
     /// Handles a key; returns true when the database must be read again
-    pub fn on_key(&mut self, key: KeyEvent) -> bool {
+    pub fn on_key(&mut self, key: impl Into<KeyEvent>) -> bool {
+        let key: KeyEvent = key.into();
         if self.help {
             self.help = false;
             return false;

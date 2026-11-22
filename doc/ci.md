@@ -8,6 +8,8 @@
   [trufflehog](https://github.com/trufflesecurity/trufflehog) on the history, and no `.env`
   committed
 - **lint**: `cargo fmt --check`, clippy with the warnings as errors
+- **wasm**: the dashboard without the terminal nor SQLite, compiled to WebAssembly as the web page
+  of kraken-dashboard-web runs it
 - **tests**: the offline suite with [cargo-nextest](https://nexte.st) on Linux x86_64 and
   aarch64, macOS and Windows
 - **test report**: the JUnit reports of every platform (`.config/nextest.toml`, profile `ci`)

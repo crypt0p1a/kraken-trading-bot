@@ -12,14 +12,23 @@ publish = false
 [[bin]]
 name = "kraken-dashboard"
 path = "src/main.rs"
+required-features = ["terminal"]
+
+[features]
+# the dashboard in the terminal, on the database of the bot. Without it, the screen and its logic
+# only, as a browser runs them: no crossterm, no SQLite, which don't compile to WebAssembly
+default = ["terminal"]
+terminal = ["ratatui/crossterm", "kraken-dashboard-data/database"]
 
 [dependencies]
+# what's read from the database of the bot
+kraken-dashboard-data.workspace = true
 ratatui.workspace = true
-rusqlite.workspace = true
 rust_decimal.workspace = true
 # the settings of the screen, kept next to the database
 serde.workspace = true
 serde_json.workspace = true
+web-time.workspace = true
 
 [dev-dependencies]
 # the demo database and the tests are written by the storage of the bot itself

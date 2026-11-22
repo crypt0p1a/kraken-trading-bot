@@ -2,7 +2,7 @@
 //! the bot wrote it. The keys come from a function: the terminal in `main`, a script in the tests
 
 use crate::app::App;
-use crate::data::Database;
+use crate::data::Source;
 use crate::settings;
 use crate::ui;
 use ratatui::Terminal;
@@ -18,7 +18,7 @@ pub const FRAME: Duration = Duration::from_millis(100);
 /// checked every `refresh`. What the screen shows is written to `settings` as soon as it changes
 pub fn run<B: Backend>(
     terminal: &mut Terminal<B>,
-    database: &Database,
+    database: &dyn Source,
     app: &mut App,
     refresh: Duration,
     settings: Option<&Path>,
