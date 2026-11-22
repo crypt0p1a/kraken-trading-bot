@@ -37,13 +37,21 @@ fn refuses_wrong_arguments_with_its_usage() {
     for (arguments, error) in [
         (
             &["--refresh", "soon"][..],
-            "--refresh expects a number of seconds",
+            "--refresh expects a number of seconds, from 1 ms to a day",
         ),
         (
             &["--refresh", "0"][..],
-            "--refresh expects a number of seconds",
+            "--refresh expects a number of seconds, from 1 ms to a day",
         ),
-        (&["--refresh"][..], "--refresh expects a number of seconds"),
+        (
+            &["--refresh"][..],
+            "--refresh expects a number of seconds, from 1 ms to a day",
+        ),
+        // a panic before: no Duration holds it
+        (&["--refresh", "inf"][..], "from 1 ms to a day"),
+        (&["--refresh", "1e30"][..], "from 1 ms to a day"),
+        // 0 once a Duration: the database read again and again
+        (&["--refresh", "1e-12"][..], "from 1 ms to a day"),
         (&["--color"][..], "unknown option --color"),
         (
             &["one.sqlite", "two.sqlite"][..],
