@@ -43,6 +43,17 @@ in `kraken-bot.sqlite.dashboard.json`, next to the database (in the volume `/dat
 removing it brings the defaults back. A setting that doesn't fit the database anymore, an account
 gone, keeps its default.
 
+## A small screen
+
+Smaller than 100 by 28 cells, a phone or a terminal too small, the dashboard shows what the
+portfolio is worth and how it moves, nothing to move through: LIVE or DRY RUN, the account shown
+and the age of the last tick, four tiles (portfolio, P&L, realized, target), then as many charts as
+the screen holds (the portfolio, the P&L, by crypto). The tiles on a row and the charts side by
+side on a wide and low screen, a phone held sideways. Smaller than 30 by 12, its size only.
+
+On the web, a tablet gets the desk (its font made smaller to hold 100 by 28 cells), a phone this
+view.
+
 ## Keys
 
 `d` the next screen, in a circle: every chart, the page of the markets (`←` `→` the pair), the desk again (`esc` back to the desk), `tab` the panel the arrows move in, `←` `→` the column its table is sorted on, `s` the other

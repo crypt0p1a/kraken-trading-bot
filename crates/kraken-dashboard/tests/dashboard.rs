@@ -380,7 +380,78 @@ fn draws_the_desk() {
     assert!(focused.contains("EQUITY"), "{focused}");
     app.on_key(KeyEvent::from(KeyCode::Char('?')));
     assert!(screen(&app, 120, 32).contains("HELP"));
-    assert!(screen(&app, 60, 20).contains("enlarge the terminal"));
+    // too small for the desk: the compact view, the help never over it
+    let small = screen(&app, 60, 20);
+    assert!(
+        small.contains("PORTFOLIO") && small.contains("P&L"),
+        "{small}"
+    );
+    assert!(
+        !small.contains("HELP") && !small.contains("enlarge"),
+        "{small}"
+    );
+}
+
+/// A screen smaller than the desk, a phone or a terminal too small: what the portfolio is worth
+/// and its charts, as many as it holds, nothing to move through
+#[test]
+fn shows_the_portfolio_on_a_small_screen() {
+    let fixture = path("compact");
+    let _storage = write(&fixture.path);
+    let (app, _database) = app(&fixture.path);
+
+    // a phone held up: two rows of two tiles, the three charts one above the other
+    let up = screen(&app, 50, 45);
+    for it in [
+        "KRAKEN",
+        "PORTFOLIO",
+        "P&L",
+        "REALIZED",
+        "TARGET",
+        "BY CRYPTO",
+    ] {
+        assert!(up.contains(it), "{it}: {up}");
+    }
+    // nothing of the desk: neither tables nor keys
+    for it in ["MANAGERS", "ORDERS", "TAPE", "QUIT"] {
+        assert!(!up.contains(it), "{it}: {up}");
+    }
+    // held sideways, wide and low: the tiles on a row, the charts side by side
+    let sideways = screen(&app, 108, 25);
+    let tiles = sideways
+        .lines()
+        .find(|it| it.contains("PORTFOLIO"))
+        .unwrap();
+    assert!(
+        tiles.contains("P&L") && tiles.contains("TARGET"),
+        "{sideways}"
+    );
+    // the charts side by side, not flat one above the other
+    let charts = sideways
+        .lines()
+        .find(|it| it.contains("PORTFOLIO ·"))
+        .unwrap();
+    assert!(charts.contains("P&L ·"), "{sideways}");
+    // a small window of a terminal: the portfolio still, fewer charts
+    let small = screen(&app, 40, 14);
+    assert!(small.contains("PORTFOLIO"), "{small}");
+    // nothing to read: its size only
+    assert!(screen(&app, 20, 8).contains("20×8"));
+    // the desk from 100 by 28
+    assert!(screen(&app, 100, 28).contains("MANAGERS"));
+}
+
+/// `DASHBOARD_COMPACT=1 cargo test -p kraken-dashboard compact_screens -- --ignored --nocapture`
+/// prints the compact view at the sizes of a phone
+#[test]
+#[ignore]
+fn compact_screens() {
+    let fixture = path("compact-print");
+    let _storage = write(&fixture.path);
+    let (app, _database) = app(&fixture.path);
+    for (width, height) in [(50, 45), (108, 25), (40, 14)] {
+        println!("{width}×{height}\n{}", screen(&app, width, height));
+    }
 }
 
 #[test]

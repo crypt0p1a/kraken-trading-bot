@@ -157,7 +157,7 @@ pub fn render_all(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn render_chart(frame: &mut Frame, app: &App, area: Rect, chart: Chart) {
+pub(super) fn render_chart(frame: &mut Frame, app: &App, area: Rect, chart: Chart) {
     match chart {
         Chart::Pnl => render_pnl(frame, app, area),
         Chart::Portfolio => render_portfolio(frame, app, area),

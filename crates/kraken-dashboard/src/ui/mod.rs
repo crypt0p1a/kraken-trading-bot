@@ -13,9 +13,13 @@
 //! ```
 //!
 //! `d` replaces the key figures and the tables with every chart, then with the page of the markets,
-//! one pair at a time, then brings the desk back
+//! one pair at a time, then brings the desk back.
+//!
+//! A screen smaller than 100 by 28 cells, a phone or a terminal too small, gets the [`compact`]
+//! view: what the portfolio is worth and how it moves, nothing to move through
 
 mod charts;
+pub mod compact;
 mod markets;
 mod panels;
 
@@ -30,7 +34,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 
-/// The smallest screen it's drawn on
+/// The smallest screen the desk is drawn on: the compact view below
 const MIN_WIDTH: u16 = 100;
 const MIN_HEIGHT: u16 = 28;
 
@@ -38,23 +42,9 @@ pub fn render(frame: &mut Frame, app: &App) {
     let area = frame.area();
     frame.render_widget(Block::new().style(Style::new().bg(BACKGROUND)), area);
 
+    // too small for the desk: the portfolio and its charts only
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
-        let message = Paragraph::new(vec![
-            Line::from("◆ KRAKEN DESK").style(theme::label()),
-            Line::from(format!(
-                "{}×{}: enlarge the terminal to {MIN_WIDTH}×{MIN_HEIGHT} at least",
-                area.width, area.height
-            ))
-            .style(theme::dim()),
-        ])
-        .alignment(Alignment::Center);
-        let [_, middle, _] = Layout::vertical([
-            Constraint::Fill(1),
-            Constraint::Length(2),
-            Constraint::Fill(1),
-        ])
-        .areas(area);
-        frame.render_widget(message, middle);
+        compact::render(frame, app, area);
         return;
     }
 
