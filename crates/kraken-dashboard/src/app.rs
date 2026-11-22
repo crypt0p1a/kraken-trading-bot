@@ -1,13 +1,13 @@
 //! The state of the dashboard: what's selected, what's shown, and the keys that change it
 
 pub use crate::data::Range;
-use crate::data::{Action, Database, Manager, ManagerKey, Order, account_of, manager_number};
+use crate::data::{Action, Manager, ManagerKey, Order, Source, account_of, manager_number};
+use crate::keys::{KeyCode, KeyEvent, KeyModifiers};
 use crate::settings::Settings;
 use crate::sort::{self, Sort};
 use crate::stats::{Model, canonical};
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::collections::HashMap;
-use std::time::Instant;
+use web_time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Panel {
@@ -87,8 +87,8 @@ impl Chart {
 const ACCOUNT_TAG: usize = 5;
 
 pub fn now_millis() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+    web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
         .map(|it| it.as_millis() as i64)
         .unwrap_or_default()
 }
@@ -165,7 +165,7 @@ impl App {
     }
 
     /// Asks the bot for a tick now, if `t` was pressed
-    pub fn ask_tick(&mut self, database: &Database) {
+    pub fn ask_tick(&mut self, database: &dyn Source) {
         if !std::mem::take(&mut self.tick_asked) {
             return;
         }
@@ -175,8 +175,9 @@ impl App {
         }
     }
 
-    /// Reads the database again when the bot wrote it, or when `force`
-    pub fn refresh(&mut self, database: &Database, force: bool) {
+    /// Reads the database again when the bot wrote it (what the bot pushed, on the web), or when
+    /// `force`
+    pub fn refresh(&mut self, database: &dyn Source, force: bool) {
         let version = match database.data_version() {
             Ok(version) => version,
             Err(error) => {
@@ -188,13 +189,16 @@ impl App {
             return;
         }
         let now = now_millis();
-        match database.load(self.range.since(now), now, self.view) {
+        match database.load_range(self.range, now, self.view) {
             Ok(data) => {
                 let view_changed = std::mem::take(&mut self.view_changed);
                 let followed = self.selected().filter(|_| !view_changed).map(|it| it.id);
+                // what's shown is as old as what was read: on the web, what the bot read at its
+                // last tick
+                let read_at = data.at;
                 self.model = Model::new(data);
                 self.data_version = Some(version);
-                self.loaded_at = now;
+                self.loaded_at = if read_at > 0 { read_at } else { now };
                 self.error = None;
                 self.sort_managers(followed);
             }
@@ -460,7 +464,8 @@ impl App {
     }
 
     /// Handles a key; returns true when the database must be read again
-    pub fn on_key(&mut self, key: KeyEvent) -> bool {
+    pub fn on_key(&mut self, key: impl Into<KeyEvent>) -> bool {
+        let key: KeyEvent = key.into();
         if self.help {
             self.help = false;
             return false;

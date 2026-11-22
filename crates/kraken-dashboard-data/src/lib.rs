@@ -5,6 +5,9 @@
 //! The series of the charts (the values of the managers, the prices) are bucketed by SQLite, so a
 //! range of months costs as much as an hour.
 //!
+//! The feature `database` (default) reads the database, with SQLite. Without it, the types only, as
+//! they go over HTTP: what a browser needs, SQLite not compiling to WebAssembly.
+//!
 //! | Module | What's read |
 //! |--------|-------------|
 //! | [`database`] | the opening, the schema, what's read at once, the tick asked for |
@@ -14,22 +17,57 @@
 //! | `orders` | the orders and the actions |
 //! | `markets` | the tickers, their candles and their indicators |
 
+#[cfg(feature = "database")]
 mod accounts;
+#[cfg(feature = "database")]
 pub mod database;
+#[cfg(feature = "database")]
 mod managers;
+#[cfg(feature = "database")]
 mod markets;
+#[cfg(feature = "database")]
 mod orders;
 pub mod wire;
 
+#[cfg(feature = "database")]
 pub use database::Database;
 
+#[cfg(feature = "database")]
 use rusqlite::Row;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "database")]
 use std::str::FromStr;
 
 /// Points of a series in a chart, at most
 pub const POINTS: i64 = 480;
+
+/// Where the dashboard reads what it shows: the [`Database`] of the bot, or what the bot pushed to
+/// its web backend, which draws the dashboard on a web page
+pub trait Source {
+    /// Changes when there's something new to read
+    fn data_version(&self) -> Result<i64>;
+    /// What a screen shows: the range up to `now` (UTC milliseconds), of the account or of all of
+    /// them added up when None
+    fn load_range(&self, range: Range, now: i64, account: Option<i64>) -> Result<Data>;
+    /// Asks the bot for a tick now, of the account or of all of them when None
+    fn request_tick(&self, at: i64, account: Option<i64>) -> Result<()>;
+}
+
+#[cfg(feature = "database")]
+impl Source for Database {
+    fn data_version(&self) -> Result<i64> {
+        Database::data_version(self)
+    }
+
+    fn load_range(&self, range: Range, now: i64, account: Option<i64>) -> Result<Data> {
+        self.load(range.since(now), now, account)
+    }
+
+    fn request_tick(&self, at: i64, account: Option<i64>) -> Result<()> {
+        Database::request_tick(self, at, account)
+    }
+}
 
 /// What can go wrong reading what's shown, told on the screen as is
 pub type Result<T> = std::result::Result<T, String>;
@@ -466,6 +504,7 @@ impl Data {
     }
 }
 
+#[cfg(feature = "database")]
 fn invalid(index: usize, text: &str) -> rusqlite::Error {
     rusqlite::Error::FromSqlConversionFailure(
         index,
@@ -474,11 +513,13 @@ fn invalid(index: usize, text: &str) -> rusqlite::Error {
     )
 }
 
+#[cfg(feature = "database")]
 fn decimal(row: &Row, index: usize) -> rusqlite::Result<Decimal> {
     let text: String = row.get(index)?;
     Decimal::from_str(&text).map_err(|_| invalid(index, &text))
 }
 
+#[cfg(feature = "database")]
 fn optional_decimal(row: &Row, index: usize) -> rusqlite::Result<Option<Decimal>> {
     let text: Option<String> = row.get(index)?;
     text.map(|it| Decimal::from_str(&it).map_err(|_| invalid(index, &it)))
@@ -498,7 +539,7 @@ pub fn percent(part: Decimal, whole: Decimal) -> f64 {
         to_f64(part / whole * Decimal::ONE_HUNDRED)
     }
 }
-#[cfg(test)]
+#[cfg(all(test, feature = "database"))]
 mod tests {
     use super::*;
     use rusqlite::Connection;

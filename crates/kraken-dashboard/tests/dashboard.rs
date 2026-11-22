@@ -757,6 +757,57 @@ fn pushes_every_screen() {
     }
 }
 
+/// What the bot pushed, read from elsewhere than its database, as the web backend draws it: the
+/// screen of the database, dated from when the bot read it
+#[test]
+fn draws_what_the_bot_pushed() {
+    use kraken_dashboard::data::wire::views;
+    use kraken_dashboard::data::{Data, Range as Shown, Source};
+
+    /// The screens of a push, read only
+    struct Pushed(Vec<kraken_dashboard::data::wire::View>);
+
+    impl Source for Pushed {
+        fn data_version(&self) -> Result<i64, String> {
+            Ok(1)
+        }
+        fn load_range(
+            &self,
+            range: Shown,
+            _now: i64,
+            account: Option<i64>,
+        ) -> Result<Data, String> {
+            self.0
+                .iter()
+                .find(|it| it.range == range && it.account == account)
+                .map(|it| it.data.clone())
+                .ok_or_else(|| "not pushed".to_string())
+        }
+        fn request_tick(&self, _at: i64, _account: Option<i64>) -> Result<(), String> {
+            Err("read only".into())
+        }
+    }
+
+    let fixture = path("pushed");
+    let _storage = write(&fixture.path);
+    let (local, database) = app(&fixture.path);
+    let read_at = now_millis() - 60_000;
+    let pushed = Pushed(views(&database, read_at).unwrap());
+    let mut remote = App::new("web".into());
+    remote.refresh(&pushed, true);
+    assert_eq!(remote.error, None);
+    assert_eq!(remote.model.data.managers, local.model.data.managers);
+    // as old as what the bot read, not as the read of the screen
+    assert_eq!(remote.loaded_at, read_at);
+    // the same desk, the clock and the age aside
+    assert!(screen(&remote, 200, 50).contains("MANAGERS"));
+
+    // a tick can't be asked for there
+    press(&mut remote, &pushed, 't');
+    remote.ask_tick(&pushed);
+    assert_eq!(remote.error.as_deref(), Some("read only"));
+}
+
 /// `DASHBOARD_DEMO=demo.sqlite cargo test -p kraken-dashboard demo -- --ignored --nocapture`
 /// prints the screen of a database, e.g. the one of `--example demo`
 #[test]
@@ -804,7 +855,7 @@ fn second_account(path: &Path) -> Storage {
     storage
 }
 
-fn press(app: &mut App, database: &Database, key: char) {
+fn press(app: &mut App, database: &dyn kraken_dashboard::data::Source, key: char) {
     if app.on_key(KeyEvent::from(KeyCode::Char(key))) {
         app.refresh(database, true);
     }

@@ -4,11 +4,17 @@
 //! (`Content-Encoding: gzip`). A screen is mostly series of numbers whose names come again at each
 //! point: a quarter of it is left.
 
-use super::{Data, Database, Range, Result};
+use super::{Data, Range};
+#[cfg(feature = "database")]
+use super::{Database, Result};
+#[cfg(feature = "database")]
 use flate2::Compression;
+#[cfg(feature = "database")]
 use flate2::read::MultiGzDecoder;
+#[cfg(feature = "database")]
 use flate2::write::GzEncoder;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "database")]
 use std::io::{Read, Write};
 
 /// The route of the backend the bot pushes to
@@ -33,6 +39,7 @@ pub struct Push {
 /// Every screen of the database at `now`: each range of all the accounts added up, then of each
 /// account when there are several, the only time the dashboard shows one apart. A view is read at
 /// once, the bot may write between two of them
+#[cfg(feature = "database")]
 pub fn views(database: &Database, now: i64) -> Result<Vec<View>> {
     let read = |range: Range, account| -> Result<View> {
         let mut data = database.load(range.since(now), now, account)?;
@@ -60,6 +67,7 @@ pub fn views(database: &Database, now: i64) -> Result<Vec<View>> {
 }
 
 /// Compressed, as `Content-Encoding: gzip`
+#[cfg(feature = "database")]
 pub fn gzip(bytes: &[u8]) -> Vec<u8> {
     let mut encoder = GzEncoder::new(Vec::with_capacity(bytes.len() / 4), Compression::default());
     // in memory: writing can't fail
@@ -69,6 +77,7 @@ pub fn gzip(bytes: &[u8]) -> Vec<u8> {
 
 /// What [`gzip`] compressed, its members one after the other, `limit` bytes at most once
 /// decompressed: a few bytes can't fill the memory
+#[cfg(feature = "database")]
 pub fn gunzip(bytes: &[u8], limit: usize) -> Result<Vec<u8>> {
     let mut decompressed = Vec::new();
     MultiGzDecoder::new(bytes)
@@ -81,7 +90,7 @@ pub fn gunzip(bytes: &[u8], limit: usize) -> Result<Vec<u8>> {
     Ok(decompressed)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "database"))]
 mod tests {
     use super::*;
 

@@ -9,14 +9,17 @@
 //! | [`app`] | what's selected and shown, the keys |
 //! | [`ui`] | the screen |
 //! | [`settings`] | what the screen shows, kept from a run to the next |
-//! | [`desk`] | the loop: the screen, the keys, the reads of the database |
+//! | [`desk`] | the loop of the terminal: the screen, the keys, the reads of the database |
+//! | [`keys`] | the keys, from the terminal or from a browser |
 //! | [`format`](mod@format), [`theme`] | the numbers and the times, the colors |
 //! | [`svg`] | a screen as an SVG image: the screenshots |
 
 pub mod app;
 pub use kraken_dashboard_data as data;
+#[cfg(feature = "terminal")]
 pub mod desk;
 pub mod format;
+pub mod keys;
 pub mod pairs;
 pub mod settings;
 pub mod sort;

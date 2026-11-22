@@ -20,7 +20,8 @@ repository = "https://github.com/crypt0p1a/kraken-trading-bot"
 kraken-spot-api = "0.1.0"
 
 # crates of the workspace
-kraken-dashboard-data = { path = "crates/kraken-dashboard-data" }
+# its types only unless a crate asks for the database: a browser has none
+kraken-dashboard-data = { path = "crates/kraken-dashboard-data", default-features = false }
 kraken-trading-bot = { path = "crates/kraken-trading-bot" }
 trading-notify = { path = "crates/trading-notify" }
 
@@ -45,7 +46,9 @@ thiserror = "2.0.18"
 tokio = { version = "1", default-features = false }
 
 # dashboard: the terminal UI, with its crossterm backend
-ratatui = "0.30.2"
+ratatui = { version = "0.30.2", default-features = false, features = ["all-widgets", "layout-cache", "macros", "underline-color"] }
+# Instant and SystemTime, in the terminal as in a browser (std panics there)
+web-time = "1.1.0"
 
 # what the bot pushes to its web backend is compressed
 flate2 = "1.1.10"

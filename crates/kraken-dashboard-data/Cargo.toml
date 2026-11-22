@@ -9,10 +9,15 @@ repository.workspace = true
 # not published on crates.io: only kraken-crypto, kraken-network and kraken-spot-api are
 publish = false
 
+[features]
+# the database read with SQLite, and what's pushed compressed. Without it, the types only: a browser
+default = ["database"]
+database = ["dep:flate2", "dep:rusqlite"]
+
 [dependencies]
 # what the bot pushes is compressed: series of numbers, their names again and again
-flate2.workspace = true
-rusqlite.workspace = true
+flate2 = { workspace = true, optional = true }
+rusqlite = { workspace = true, optional = true }
 rust_decimal.workspace = true
 # what's shown goes over HTTP: the bot pushes it
 serde.workspace = true

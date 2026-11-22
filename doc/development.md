@@ -21,6 +21,17 @@ crates/
 | `trading-notify` | the [notifications](trading-bot.md#notifications): languages, texts, sending through ntfy |
 
 
+The dashboard runs in a browser too, on the web page of
+[kraken-dashboard-web](https://github.com/crypt0p1a/kraken-dashboard-web): without its feature
+`terminal` (crossterm, the loop of the terminal, the database), and `kraken-dashboard-data`
+without its feature `database` (SQLite), its screen and its logic compile to WebAssembly:
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo clippy -p kraken-dashboard -p kraken-dashboard-data --lib --no-default-features \
+  --target wasm32-unknown-unknown -- -D warnings
+```
+
 ## Running it with cargo
 
 The bot reads its environment, or else a `.env` file of the current directory, as with Docker:
