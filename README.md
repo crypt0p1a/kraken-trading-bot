@@ -97,15 +97,17 @@ money.
 
 ```text
 crates/
-├── kraken-trading-bot  the bot: managers, strategy, SQLite database (executable, Docker)
-├── kraken-dashboard    its dashboard in the terminal (ratatui), live from its database
-└── trading-notify      notifications of a trading bot through ntfy, in several languages
+├── kraken-trading-bot     the bot: managers, strategy, SQLite database (executable, Docker)
+├── kraken-dashboard       its dashboard in the terminal (ratatui), live from its database
+├── kraken-dashboard-data  what the dashboard shows, read from the database (shared, serializable)
+└── trading-notify         notifications of a trading bot through ntfy, in several languages
 ```
 
 | Crate | What's in it |
 |-------|--------------|
 | `kraken-trading-bot` | the [managers](docs/trading-bot.md#configuration), [several accounts](docs/trading-bot.md#several-accounts), [virtual managers](docs/trading-bot.md#virtual-managers), the [indicators of the market](docs/trading-bot.md#indicators-of-the-market) and the [database](docs/trading-bot.md#database) |
 | `kraken-dashboard` | the [dashboard](docs/trading-bot.md#dashboard): P&L, managers, orders, markets, decisions, charts and heatmaps |
+| `kraken-dashboard-data` | what the dashboard shows, read from the database of the bot, as JSON too: shared by the dashboard and the bot |
 | `trading-notify` | the [notifications](docs/trading-bot.md#notifications): languages, texts, sending through ntfy |
 
 ## Development

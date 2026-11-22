@@ -3,7 +3,7 @@
 //!
 //! | Module | Responsibility |
 //! |--------|----------------|
-//! | [`data`] | what's read from the database |
+//! | [`data`] | what's read from the database: the crate `kraken-dashboard-data` |
 //! | [`stats`] | the P&L realized by the sells, the totals, the P&L over time |
 //! | [`pairs`] | the markets one by one: candles, returns, drawdown, the levels of the managers |
 //! | [`app`] | what's selected and shown, the keys |
@@ -14,7 +14,7 @@
 //! | [`svg`] | a screen as an SVG image: the screenshots |
 
 pub mod app;
-pub mod data;
+pub use kraken_dashboard_data as data;
 pub mod desk;
 pub mod format;
 pub mod pairs;

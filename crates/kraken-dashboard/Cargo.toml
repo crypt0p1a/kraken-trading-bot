@@ -14,6 +14,8 @@ name = "kraken-dashboard"
 path = "src/main.rs"
 
 [dependencies]
+# what's read from the database of the bot
+kraken-dashboard-data.workspace = true
 ratatui.workspace = true
 rusqlite.workspace = true
 rust_decimal.workspace = true

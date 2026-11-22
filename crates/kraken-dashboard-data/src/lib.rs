@@ -1,5 +1,6 @@
-//! What the dashboard reads from the database of the bot, opened read only: the bot keeps
-//! writing it while the dashboard is open.
+//! What the dashboard of kraken-trading-bot shows, read from the database of the bot, opened read
+//! only: the bot keeps writing it while it's read. Shared by the dashboard and the bot, which pushes
+//! it to a web backend: [`Data`] goes over HTTP, as JSON.
 //!
 //! The series of the charts (the values of the managers, the prices) are bucketed by SQLite, so a
 //! range of months costs as much as an hour.
@@ -22,10 +23,14 @@ pub use database::Database;
 
 use rusqlite::Row;
 use rust_decimal::Decimal;
+use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
 /// Points of a series in a chart, at most
 pub const POINTS: i64 = 480;
+
+/// What can go wrong reading what's shown, told on the screen as is
+pub type Result<T> = std::result::Result<T, String>;
 
 /// A manager among those of every account: the same id runs on each of them. The key of the first
 /// account is the id itself
@@ -41,13 +46,13 @@ pub fn account_of(key: ManagerKey) -> i64 {
     (key >> 32) + 1
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Side {
     Buy,
     Sell,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Order {
     pub txid: String,
     pub manager_id: ManagerKey,
@@ -90,7 +95,7 @@ impl Order {
 }
 
 /// The last state of a manager, saved by the bot at each tick
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Manager {
     pub id: ManagerKey,
     /// The pair as configured, e.g. "XBTUSD", "XBT/USD" or "XXBTZUSD"
@@ -149,7 +154,7 @@ impl Manager {
 }
 
 /// A point of the history of a manager
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Snapshot {
     pub manager_id: ManagerKey,
     /// UTC milliseconds
@@ -160,7 +165,7 @@ pub struct Snapshot {
 }
 
 /// A decision of a manager, and what came of it
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Action {
     pub manager_id: ManagerKey,
     /// UTC milliseconds
@@ -176,7 +181,7 @@ pub struct Action {
 }
 
 /// The trend and the volatility of a pair over 24 hours
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Indicators {
     pub atr_percent: f64,
     pub ema_fast: f64,
@@ -198,7 +203,7 @@ impl Indicators {
 }
 
 /// The last ticker of a pair
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Market {
     /// Kraken name of the pair, e.g. "XXBTZUSD"
     pub key: String,
@@ -221,7 +226,7 @@ pub struct Market {
 
 /// The ticks of a bucket of the range: the first price, the extremes, the last one, with the book
 /// and the volume of the last tick
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Candle {
     /// UTC milliseconds of the last tick
     pub at: i64,
@@ -249,7 +254,7 @@ impl Candle {
 }
 
 /// The indicators of a pair at a tick
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct TrendPoint {
     /// UTC milliseconds
     pub at: i64,
@@ -259,7 +264,7 @@ pub struct TrendPoint {
 }
 
 /// What the whole account is worth in a quote currency, managers or not
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Account {
     /// Kraken name of the asset, e.g. "ZEUR"
     pub quote: String,
@@ -278,7 +283,7 @@ impl Account {
 }
 
 /// What the whole account was worth in a quote currency at a tick
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AccountPoint {
     /// Kraken name of the asset, e.g. "ZEUR"
     pub quote: String,
@@ -290,7 +295,7 @@ pub struct AccountPoint {
 }
 
 /// A Kraken account on its own, whatever is shown, to compare it with the others
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AccountLine {
     pub name: String,
     /// Its managers: (key, pair, budget)
@@ -301,8 +306,63 @@ pub struct AccountLine {
     pub series: Vec<AccountPoint>,
 }
 
+/// The time a screen shows, up to now
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Range {
+    Hour,
+    Day,
+    Week,
+    Month,
+    All,
+}
+
+impl Range {
+    pub const ALL: [Range; 5] = [Self::Hour, Self::Day, Self::Week, Self::Month, Self::All];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Hour => "1H",
+            Self::Day => "24H",
+            Self::Week => "7D",
+            Self::Month => "30D",
+            Self::All => "ALL",
+        }
+    }
+
+    /// The periods the growth compares in this range, UTC milliseconds: a tick of the bot at most
+    pub fn period(self) -> i64 {
+        const HOUR: i64 = 3_600_000;
+        match self {
+            Self::Hour => 5 * 60_000,
+            Self::Day => HOUR,
+            Self::Week | Self::Month | Self::All => 24 * HOUR,
+        }
+    }
+
+    pub fn period_label(self) -> &'static str {
+        match self {
+            Self::Hour => "5 MIN",
+            Self::Day => "HOUR",
+            Self::Week | Self::Month | Self::All => "DAY",
+        }
+    }
+
+    /// Start of the range, UTC milliseconds: 0 for everything
+    pub fn since(self, now: i64) -> i64 {
+        const HOUR: i64 = 3_600_000;
+        match self {
+            Self::Hour => now - HOUR,
+            Self::Day => now - 24 * HOUR,
+            Self::Week => now - 7 * 24 * HOUR,
+            Self::Month => now - 30 * 24 * HOUR,
+            Self::All => 0,
+        }
+    }
+}
+
 /// Everything shown, read at once
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Data {
     pub managers: Vec<Manager>,
     /// Oldest first
@@ -330,6 +390,78 @@ pub struct Data {
     pub version: usize,
     /// Start of the range, UTC milliseconds
     pub since: i64,
+    /// When it was read, UTC milliseconds: by the bot at its last tick, through a server
+    #[serde(default)]
+    pub at: i64,
+}
+
+impl Data {
+    /// An infinite or NaN number, as SQLite may hold one, becomes 0: JSON has none, it would write
+    /// `null` and nothing could be read back
+    pub fn make_finite(&mut self) {
+        fn finite(value: &mut f64) {
+            if !value.is_finite() {
+                *value = 0.0;
+            }
+        }
+        fn snapshot(it: &mut Snapshot) {
+            finite(&mut it.value);
+            finite(&mut it.held);
+        }
+        fn point(it: &mut AccountPoint) {
+            finite(&mut it.value);
+            finite(&mut it.cash);
+        }
+        for order in &mut self.orders {
+            finite(&mut order.open_time);
+            if let Some(it) = &mut order.close_time {
+                finite(it);
+            }
+        }
+        self.snapshots.iter_mut().for_each(snapshot);
+        self.account_series.iter_mut().for_each(point);
+        for line in &mut self.account_lines {
+            line.managers
+                .iter_mut()
+                .for_each(|(_, _, budget)| finite(budget));
+            line.snapshots.iter_mut().for_each(snapshot);
+            line.series.iter_mut().for_each(point);
+        }
+        for market in &mut self.markets {
+            if let Some(it) = &mut market.indicators {
+                for value in [
+                    &mut it.atr_percent,
+                    &mut it.ema_fast,
+                    &mut it.ema_slow,
+                    &mut it.slope_24h_percent,
+                    &mut it.range_24h_percent,
+                    &mut it.change_24h_percent,
+                ] {
+                    finite(value);
+                }
+            }
+            market.prices.iter_mut().for_each(|(_, it)| finite(it));
+            for it in &mut market.candles {
+                for value in [
+                    &mut it.open,
+                    &mut it.high,
+                    &mut it.low,
+                    &mut it.close,
+                    &mut it.bid,
+                    &mut it.ask,
+                    &mut it.volume_24h,
+                    &mut it.vwap_24h,
+                ] {
+                    finite(value);
+                }
+            }
+            for it in &mut market.trend {
+                for value in [&mut it.ema_fast, &mut it.ema_slow, &mut it.atr_percent] {
+                    finite(value);
+                }
+            }
+        }
+    }
 }
 
 fn invalid(index: usize, text: &str) -> rusqlite::Error {
@@ -503,6 +635,31 @@ mod tests {
             ..candle
         };
         assert_eq!(candle.spread_bps(), 200.0);
+    }
+
+    #[test]
+    fn makes_the_numbers_finite_for_json() {
+        let database = oldest(
+            "CREATE TABLE indicators (pair TEXT, at INTEGER, close REAL, atr_percent REAL,
+                ema_fast REAL, ema_slow REAL, slope_24h_percent REAL, range_24h_percent REAL,
+                change_24h_percent REAL);
+             INSERT INTO indicators VALUES ('XXBTZEUR', 2000, 51000, 9e999, 1, 2, -9e999, 3, 4);",
+        );
+        let connection = &database.connection;
+        connection
+            .execute_batch("UPDATE orders SET open_time = 9e999, close_time = -9e999")
+            .unwrap();
+        let mut data = database.load(0, 3000, None).unwrap();
+        let indicators = data.markets[0].indicators.unwrap();
+        assert!(indicators.atr_percent.is_infinite());
+        assert!(data.orders[0].open_time.is_infinite());
+        data.make_finite();
+        assert_eq!(data.orders[0].open_time, 0.0);
+        assert_eq!(data.orders[0].close_time, Some(0.0));
+        let indicators = data.markets[0].indicators.unwrap();
+        assert_eq!(indicators.atr_percent, 0.0);
+        assert_eq!(indicators.slope_24h_percent, 0.0);
+        assert_eq!(indicators.ema_slow, 2.0);
     }
 
     #[test]

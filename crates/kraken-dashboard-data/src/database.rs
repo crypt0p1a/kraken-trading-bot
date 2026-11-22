@@ -1,6 +1,6 @@
 //! The database of the bot opened read only, and the only write of the dashboard: a tick asked for
 
-use super::{Data, POINTS};
+use super::{Data, POINTS, Result};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use std::collections::HashSet;
 use std::path::Path;
@@ -23,8 +23,6 @@ pub struct Database {
     pub(super) holdings: bool,
     version: usize,
 }
-
-type Result<T> = std::result::Result<T, String>;
 
 fn sql(error: rusqlite::Error) -> String {
     format!("database: {error}")
@@ -162,6 +160,7 @@ impl Database {
             names: self.names().map_err(sql)?,
             version: self.version,
             since: start,
+            at: now,
         };
         transaction.finish().map_err(sql)?;
         Ok(data)

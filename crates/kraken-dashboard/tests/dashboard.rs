@@ -704,6 +704,24 @@ fn refuses_what_isnt_a_database_of_the_bot() {
     assert!(error.contains("no database"), "{error}");
 }
 
+/// What's shown goes over HTTP as JSON, from the bot to the dashboard: nothing of it changes on the
+/// way, the amounts as the prices
+#[test]
+fn what_is_shown_survives_json() {
+    let fixture = path("json");
+    let _storage = write(&fixture.path);
+    let _alice = second_account(&fixture.path);
+    let database = Database::open(&fixture.path).unwrap();
+    let now = now_millis();
+    for account in [None, Some(1), Some(2)] {
+        let data = database.load(now - 3_600_000, now, account).unwrap();
+        assert!(!data.managers.is_empty() && !data.markets[0].candles.is_empty());
+        let json = serde_json::to_string(&data).unwrap();
+        let read: kraken_dashboard::data::Data = serde_json::from_str(&json).unwrap();
+        assert_eq!(read, data, "{account:?}");
+    }
+}
+
 /// `DASHBOARD_DEMO=demo.sqlite cargo test -p kraken-dashboard demo -- --ignored --nocapture`
 /// prints the screen of a database, e.g. the one of `--example demo`
 #[test]

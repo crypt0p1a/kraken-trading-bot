@@ -1,5 +1,6 @@
 //! The state of the dashboard: what's selected, what's shown, and the keys that change it
 
+pub use crate::data::Range;
 use crate::data::{Action, Database, Manager, ManagerKey, Order, account_of, manager_number};
 use crate::settings::Settings;
 use crate::sort::{self, Sort};
@@ -78,60 +79,6 @@ impl Chart {
             Self::Allocation => Self::HeatPairs,
             Self::HeatPairs => Self::HeatAccounts,
             Self::HeatAccounts => Self::Pnl,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Range {
-    Hour,
-    Day,
-    Week,
-    Month,
-    All,
-}
-
-impl Range {
-    pub const ALL: [Range; 5] = [Self::Hour, Self::Day, Self::Week, Self::Month, Self::All];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Hour => "1H",
-            Self::Day => "24H",
-            Self::Week => "7D",
-            Self::Month => "30D",
-            Self::All => "ALL",
-        }
-    }
-
-    /// The periods the growth compares in this range, UTC milliseconds: a tick of the bot at most
-    pub fn period(self) -> i64 {
-        const HOUR: i64 = 3_600_000;
-        match self {
-            Self::Hour => 5 * 60_000,
-            Self::Day => HOUR,
-            Self::Week | Self::Month | Self::All => 24 * HOUR,
-        }
-    }
-
-    pub fn period_label(self) -> &'static str {
-        match self {
-            Self::Hour => "5 MIN",
-            Self::Day => "HOUR",
-            Self::Week | Self::Month | Self::All => "DAY",
-        }
-    }
-
-    /// Start of the range, UTC milliseconds: 0 for everything
-    pub fn since(self, now: i64) -> i64 {
-        const HOUR: i64 = 3_600_000;
-        match self {
-            Self::Hour => now - HOUR,
-            Self::Day => now - 24 * HOUR,
-            Self::Week => now - 7 * 24 * HOUR,
-            Self::Month => now - 30 * 24 * HOUR,
-            Self::All => 0,
         }
     }
 }

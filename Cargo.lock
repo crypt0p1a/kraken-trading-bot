@@ -1154,6 +1154,7 @@ name = "kraken-dashboard"
 version = "0.1.0"
 dependencies = [
  "fastrand",
+ "kraken-dashboard-data",
  "kraken-spot-api",
  "kraken-trading-bot",
  "ratatui",
@@ -1161,6 +1162,15 @@ dependencies = [
  "rust_decimal",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "kraken-dashboard-data"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
+ "rust_decimal",
+ "serde",
 ]
 
 [[package]]
