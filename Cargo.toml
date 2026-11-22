@@ -47,5 +47,10 @@ tokio = { version = "1", default-features = false }
 # dashboard: the terminal UI, with its crossterm backend
 ratatui = "0.30.2"
 
+# what the bot pushes to its web backend is compressed
+flate2 = "1.1.10"
+
 # tests only
 wiremock = "0.6.5"
+# a web backend in the tests, receiving what the bot pushes
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }

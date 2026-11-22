@@ -62,6 +62,7 @@ managers:
 | `KRAKEN_BOT_DATABASE` | `kraken-bot.sqlite` | the SQLite database |
 | `KRAKEN_BOT_NTFY_TOPIC`, `KRAKEN_BOT_NTFY_TOKEN` | | the [notifications](#notifications) |
 | `KRAKEN_BOT_API_HOST` | `https://api.kraken.com` | another host speaking the API of Kraken: a mocked Kraken in the tests |
+| `KRAKEN_BOT_PUSH_URL` | | its [web backend](#web-backend): what the dashboard shows is pushed there at each tick |
 | `RUST_LOG` | `info` | |
 
 ## Several accounts
@@ -251,6 +252,27 @@ cargo run -p kraken-dashboard -- demo.sqlite
 With several accounts, `a` goes through them in a circle: all of them added up (the managers named
 `alice·#7`), then each one alone. `t` asks for a tick of what's shown. An account joining makes the
 curve of the portfolio jump, as a deposit does.
+
+## Web backend
+
+To follow the bot from elsewhere than its machine, it pushes what its dashboard shows to
+[kraken-dashboard-web](https://github.com/crypt0p1a/kraken-dashboard-web), its web backend, when
+`.env` sets `KRAKEN_BOT_PUSH_URL` (e.g. `http://dashboard-web:8080`). Without it, nothing is
+pushed, nothing goes on the network.
+
+- **What**: every screen of the dashboard, read from the database as the dashboard reads it
+  and bucketed: each range (1H, 24H, 7D, 30D, ALL) of all the accounts added up, and of each
+  account when there are several. `PUT /state`, JSON compressed with gzip
+  (`Content-Encoding: gzip`): for the demo database (8 managers, 3 pairs, 7 days), 3.1 MB of JSON,
+  about 720 KB pushed.
+- **When**: as soon as the bot starts (the last state of its database), at the end of each tick,
+  and when a forced tick starts.
+- **Read only**: nothing comes back from the backend to the bot.
+- **Never in the way**: the pusher has a thread and a connection of its own. The backend away or
+  slow, the bot goes on trading, says so once in its logs, and pushes its last state again every 30
+  seconds until the backend is back. Stopping, it pushes its last tick, 25 seconds at most.
+
+The backend has nothing authenticated yet: run it on a network of your own only.
 
 ## Notifications
 

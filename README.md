@@ -34,6 +34,9 @@ client of [kraken-rust](https://github.com/crypt0p1a/kraken-rust), from crates.i
   candles and heatmaps, live from the database
 - **Notifications on the phone** through [ntfy](https://ntfy.sh), in English or French
 - **Everything kept in SQLite**: the orders, the decisions, the prices, the value of the account
+- **A web backend**, optional: what the dashboard shows pushed at each tick to
+  [kraken-dashboard-web](https://github.com/crypt0p1a/kraken-dashboard-web), to follow the bot
+  from elsewhere
 - **A Docker image** for amd64 and arm64; `--check` tells when the API key could withdraw funds
 
 ## Quick start
@@ -105,7 +108,7 @@ crates/
 
 | Crate | What's in it |
 |-------|--------------|
-| `kraken-trading-bot` | the [managers](docs/trading-bot.md#configuration), [several accounts](docs/trading-bot.md#several-accounts), [virtual managers](docs/trading-bot.md#virtual-managers), the [indicators of the market](docs/trading-bot.md#indicators-of-the-market) and the [database](docs/trading-bot.md#database) |
+| `kraken-trading-bot` | the [managers](docs/trading-bot.md#configuration), [several accounts](docs/trading-bot.md#several-accounts), [virtual managers](docs/trading-bot.md#virtual-managers), the [indicators of the market](docs/trading-bot.md#indicators-of-the-market), the [database](docs/trading-bot.md#database) and what's pushed to the [web backend](docs/trading-bot.md#web-backend) |
 | `kraken-dashboard` | the [dashboard](docs/trading-bot.md#dashboard): P&L, managers, orders, markets, decisions, charts and heatmaps |
 | `kraken-dashboard-data` | what the dashboard shows, read from the database of the bot, as JSON too: shared by the dashboard and the bot |
 | `trading-notify` | the [notifications](docs/trading-bot.md#notifications): languages, texts, sending through ntfy |

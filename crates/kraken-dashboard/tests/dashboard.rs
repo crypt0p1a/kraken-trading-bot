@@ -722,6 +722,41 @@ fn what_is_shown_survives_json() {
     }
 }
 
+/// What the bot pushes: every range of all the accounts added up, then of each of them, each as the
+/// dashboard reads it from the database
+#[test]
+fn pushes_every_screen() {
+    let fixture = path("views");
+    let _storage = write(&fixture.path);
+    let _alice = second_account(&fixture.path);
+    let database = Database::open(&fixture.path).unwrap();
+    let now = now_millis();
+    let views = kraken_dashboard::data::wire::views(&database, now).unwrap();
+    assert_eq!(views.len(), Range::ALL.len() * 3);
+    let screens: Vec<_> = views.iter().map(|it| (it.account, it.range)).collect();
+    assert_eq!(&screens[..5], Range::ALL.map(|it| (None, it)));
+    assert_eq!(screens[5], (Some(1), Range::Hour));
+    assert_eq!(screens[14], (Some(2), Range::All));
+    // a single account: the dashboard never shows it apart, all of them added up only
+    let single = path("single-view");
+    let _storage = write(&single.path);
+    let screens = kraken_dashboard::data::wire::views(&Database::open(&single.path).unwrap(), now)
+        .unwrap()
+        .iter()
+        .map(|it| (it.account, it.range))
+        .collect::<Vec<_>>();
+    assert_eq!(screens, Range::ALL.map(|it| (None, it)));
+
+    for view in &views {
+        assert_eq!(
+            view.data,
+            database
+                .load(view.range.since(now), now, view.account)
+                .unwrap()
+        );
+    }
+}
+
 /// `DASHBOARD_DEMO=demo.sqlite cargo test -p kraken-dashboard demo -- --ignored --nocapture`
 /// prints the screen of a database, e.g. the one of `--example demo`
 #[test]

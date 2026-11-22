@@ -19,6 +19,9 @@ pub struct Environment {
     /// KRAKEN_BOT_API_HOST, the real Kraken (https://api.kraken.com) by default: another host
     /// speaking its API, a mocked Kraken in the tests
     pub api_host: Option<String>,
+    /// KRAKEN_BOT_PUSH_URL, its web backend (kraken-dashboard-web): what the dashboard shows is
+    /// pushed there at each tick. Nothing pushed without it
+    pub push_url: Option<String>,
 }
 
 /// A Kraken account and its API key. All of them run the same managers
@@ -65,6 +68,10 @@ impl std::fmt::Debug for Environment {
             .field("database_path", &self.database_path)
             .field("ntfy_topic", &self.ntfy_topic.as_ref().map(|_| "***"))
             .field("ntfy_token", &self.ntfy_token.as_ref().map(|_| "***"))
+            .field(
+                "push_url",
+                &self.push_url.as_deref().map(crate::pusher::redacted),
+            )
             .finish()
     }
 }
@@ -136,6 +143,7 @@ impl Environment {
             ntfy_topic: get("KRAKEN_BOT_NTFY_TOPIC").map(str::to_string),
             ntfy_token: get("KRAKEN_BOT_NTFY_TOKEN").map(str::to_string),
             api_host: get("KRAKEN_BOT_API_HOST").map(str::to_string),
+            push_url: get("KRAKEN_BOT_PUSH_URL").map(str::to_string),
         })
     }
 }
@@ -182,8 +190,13 @@ mod tests {
             ("KRAKEN_BOT_CONFIG", "/config/managers.yaml"),
             ("KRAKEN_BOT_DATABASE", "/data/bot.sqlite"),
             ("KRAKEN_BOT_API_HOST", "http://127.0.0.1:8080"),
+            ("KRAKEN_BOT_PUSH_URL", "http://dashboard-web:8080"),
         ]))
         .unwrap();
+        assert_eq!(
+            environment.push_url.as_deref(),
+            Some("http://dashboard-web:8080")
+        );
 
         assert_eq!(environment.config_path, Path::new("/config/managers.yaml"));
         assert_eq!(environment.database_path, Path::new("/data/bot.sqlite"));
@@ -204,6 +217,16 @@ mod tests {
         assert_eq!(environment.database_path, Path::new("kraken-bot.sqlite"));
         // the real Kraken
         assert_eq!(environment.api_host, None);
+        // nothing pushed
+        assert_eq!(environment.push_url, None);
+        // nor with an empty KRAKEN_BOT_PUSH_URL, as .env.example leaves it
+        let empty = Environment::from_variables(&variables(&[
+            ("KRAKEN_API_KEY", "key"),
+            ("KRAKEN_API_SECRET", "c2VjcmV0"),
+            ("KRAKEN_BOT_PUSH_URL", " "),
+        ]))
+        .unwrap();
+        assert_eq!(empty.push_url, None);
 
         assert!(Environment::from_variables(&variables(&[("KRAKEN_API_KEY", "key")])).is_err());
         assert!(
@@ -217,6 +240,9 @@ mod tests {
 
     #[test]
     fn never_prints_the_credentials() {
+        // a user and a password in the URL, put together: never written whole in the sources, which
+        // the scanners of secrets read
+        let push_url = ["https://bot", ":the-password", "@dash.example"].concat();
         let environment = Environment::from_variables(&variables(&[
             ("KRAKEN_BOT_ACCOUNTS", "main,alice"),
             ("KRAKEN_API_KEY", "the-key"),
@@ -225,6 +251,7 @@ mod tests {
             ("KRAKEN_API_SECRET_ALICE", "the-alice-secret"),
             ("KRAKEN_BOT_NTFY_TOPIC", "the-topic"),
             ("KRAKEN_BOT_NTFY_TOKEN", "the-token"),
+            ("KRAKEN_BOT_PUSH_URL", push_url.as_str()),
         ]))
         .unwrap();
         assert_eq!(environment.ntfy_topic.as_deref(), Some("the-topic"));
@@ -237,6 +264,7 @@ mod tests {
             "the-alice-secret",
             "the-topic",
             "the-token",
+            "the-password",
         ] {
             assert!(!printed.contains(secret), "{printed}");
         }

@@ -18,6 +18,7 @@
 //! | [`bot`] | a tick: synchronization, then each manager decides and acts |
 //! | [`notify`] | what changed in the orders, for the notifications of `trading-notify` |
 //! | [`notify`] | the notifications on the phone, through ntfy |
+//! | [`pusher`] | what the dashboard shows, pushed to its web backend at each tick |
 
 pub mod bot;
 pub mod clock;
@@ -30,6 +31,7 @@ pub mod notify;
 pub mod order;
 pub mod pair;
 pub mod planner;
+pub mod pusher;
 pub mod rebuild;
 pub mod storage;
 pub mod strategy;

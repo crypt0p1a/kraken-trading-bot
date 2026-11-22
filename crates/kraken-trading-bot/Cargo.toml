@@ -15,11 +15,15 @@ path = "src/main.rs"
 
 [dependencies]
 fastrand.workspace = true
+# what the dashboard shows, pushed to the web backend: read as the dashboard reads it
+kraken-dashboard-data.workspace = true
 humantime-serde.workspace = true
 kraken-spot-api.workspace = true
 trading-notify.workspace = true
 rusqlite.workspace = true
 rust_decimal.workspace = true
+# the pusher, on a thread of its own: blocking, never on the ticks
+reqwest = { workspace = true, features = ["blocking"] }
 serde.workspace = true
 serde_json.workspace = true
 serde_norway.workspace = true
@@ -30,5 +34,7 @@ tracing-subscriber.workspace = true
 yata.workspace = true
 
 [dev-dependencies]
+# a web backend of the tests, receiving what the bot pushes
+axum.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
 wiremock.workspace = true

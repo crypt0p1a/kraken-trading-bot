@@ -8,6 +8,7 @@
 //! | Module | What's read |
 //! |--------|-------------|
 //! | [`database`] | the opening, the schema, what's read at once, the tick asked for |
+//! | [`wire`] | what the bot pushes to its web backend |
 //! | `accounts` | what the accounts are worth, alone and added up |
 //! | `managers` | the managers and their history |
 //! | `orders` | the orders and the actions |
@@ -18,6 +19,7 @@ pub mod database;
 mod managers;
 mod markets;
 mod orders;
+pub mod wire;
 
 pub use database::Database;
 

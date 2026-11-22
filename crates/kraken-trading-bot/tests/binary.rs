@@ -247,3 +247,97 @@ async fn ticks_until_it_is_asked_to_stop() {
     assert_eq!(status.code(), Some(0), "{:?}", lines.lock().unwrap());
     assert_eq!(count(&lines, "stopping"), 1);
 }
+
+/// The loop with KRAKEN_BOT_PUSH_URL: what the dashboard shows is pushed to the web backend as
+/// soon as the bot starts and after each tick, the manager of the first one included
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn pushes_to_the_web_backend() {
+    use axum::body::Bytes;
+    use axum::http::StatusCode;
+    use axum::routing::put;
+    use kraken_dashboard_data::wire::{Push, gunzip};
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
+    use std::sync::{Arc, Mutex};
+
+    let pushes: Arc<Mutex<Vec<Push>>> = Arc::default();
+    let stored = pushes.clone();
+    let router = axum::Router::new().route(
+        "/state",
+        put(move |body: Bytes| {
+            let stored = stored.clone();
+            async move {
+                let json = gunzip(&body, 1 << 30).unwrap();
+                stored
+                    .lock()
+                    .unwrap()
+                    .push(serde_json::from_slice(&json).unwrap());
+                StatusCode::NO_CONTENT
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let backend = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, router).await });
+
+    let folder = Folder::new("push");
+    let server = kraken().await;
+    let mut child = bot(&folder, Some(&server.uri()))
+        .env("KRAKEN_BOT_PUSH_URL", &backend)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let lines: Lines = Arc::new(Mutex::new(Vec::new()));
+    let readers: Vec<_> = [
+        Box::new(child.stdout.take().unwrap()) as Box<dyn std::io::Read + Send>,
+        Box::new(child.stderr.take().unwrap()),
+    ]
+    .into_iter()
+    .map(|stream| {
+        let lines = lines.clone();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stream).lines().map_while(Result::ok) {
+                lines.lock().unwrap().push(line);
+            }
+        })
+    })
+    .collect();
+
+    // the manager of the first tick, pushed
+    let start = std::time::Instant::now();
+    while !pushes
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|push| push.views[0].data.managers.iter().any(|it| it.id == 42))
+    {
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(60),
+            "nothing pushed: {:?}",
+            lines.lock().unwrap()
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    wait_for(&lines, "tick done", 1).await;
+
+    let killed = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(killed.success());
+    let status = tokio::task::spawn_blocking(move || child.wait().unwrap())
+        .await
+        .unwrap();
+    for reader in readers {
+        reader.join().unwrap();
+    }
+    assert_eq!(status.code(), Some(0), "{:?}", lines.lock().unwrap());
+    assert_eq!(
+        count(&lines, "nothing pushed"),
+        0,
+        "{:?}",
+        lines.lock().unwrap()
+    );
+}

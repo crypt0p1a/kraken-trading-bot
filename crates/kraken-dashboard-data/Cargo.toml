@@ -10,6 +10,8 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+# what the bot pushes is compressed: series of numbers, their names again and again
+flate2.workspace = true
 rusqlite.workspace = true
 rust_decimal.workspace = true
 # what's shown goes over HTTP: the bot pushes it
