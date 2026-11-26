@@ -340,11 +340,17 @@ impl Model {
             .map(|(id, orders)| (*id, performance(orders, holdings.get(id).copied())))
             .collect();
 
-        let quotes: HashMap<ManagerKey, String> = data
+        let mut quotes: HashMap<ManagerKey, String> = data
             .managers
             .iter()
             .map(|it| (it.id, split(&it.pair).1))
             .collect();
+        // a manager gone since its orders, a virtual one deleted: of the quote of its pair
+        for order in &data.orders {
+            quotes
+                .entry(order.manager_id)
+                .or_insert_with(|| split(&order.pair).1);
+        }
         let markets = data
             .managers
             .iter()
@@ -366,23 +372,44 @@ impl Model {
             trades,
         };
 
-        let mut by_quote: BTreeMap<&str, Vec<ManagerKey>> = BTreeMap::new();
-        for manager in &model.data.managers {
-            by_quote
-                .entry(model.quotes[&manager.id].as_str())
-                .or_default()
-                .push(manager.id);
-        }
-        let mut totals: Vec<Totals> = by_quote
-            .into_values()
-            .map(|ids| model.totals_of(&ids))
+        let quotes: BTreeSet<&str> = model
+            .data
+            .managers
+            .iter()
+            .map(|it| model.quotes[&it.id].as_str())
+            .collect();
+        let mut totals: Vec<Totals> = quotes
+            .into_iter()
+            .map(|quote| model.totals_of(&model.ids_of(quote)))
             .collect();
         totals.sort_by(|a, b| b.budget.cmp(&a.budget).then_with(|| a.quote.cmp(&b.quote)));
         model.totals = totals;
         model
     }
 
-    /// The managers of `ids` together, all of one quote currency
+    /// The managers of the quote: the ones there, then the ones gone since their orders, a virtual
+    /// manager deleted, whose sells still count
+    pub fn ids_of(&self, quote: &str) -> Vec<ManagerKey> {
+        let mut ids: Vec<ManagerKey> = self
+            .data
+            .managers
+            .iter()
+            .filter(|it| self.quotes.get(&it.id).is_some_and(|it| it == quote))
+            .map(|it| it.id)
+            .collect();
+        let mut gone: Vec<ManagerKey> = self
+            .quotes
+            .iter()
+            .filter(|(id, it)| *it == quote && self.manager(**id).is_none())
+            .map(|(id, _)| *id)
+            .collect();
+        gone.sort_unstable();
+        ids.extend(gone);
+        ids
+    }
+
+    /// The managers of `ids` together, all of one quote currency. A manager gone counts for what
+    /// it did: its sells, its fees, its volume
     pub fn totals_of(&self, ids: &[ManagerKey]) -> Totals {
         let mut total = Totals::default();
         for manager in self.data.managers.iter().filter(|it| ids.contains(&it.id)) {
@@ -393,7 +420,14 @@ impl Model {
             total.target += manager.target();
             total.exposure += manager.base() * manager.last_price;
             total.open_orders += self.open_orders_of(manager.id).count();
-            if let Some(performance) = self.performances.get(&manager.id) {
+        }
+        for id in ids {
+            if total.quote.is_empty()
+                && let Some(quote) = self.quotes.get(id)
+            {
+                total.quote.clone_from(quote);
+            }
+            if let Some(performance) = self.performances.get(id) {
                 total.realized += performance.realized;
                 total.fees += performance.fees;
                 total.volume += performance.volume;
@@ -929,6 +963,53 @@ mod tests {
         assert_eq!(performance.fees, d("0.8"));
         assert_eq!(performance.volume, d("201"));
         assert_eq!(performance.wins(), 1);
+    }
+
+    #[test]
+    fn counts_the_sells_of_a_manager_gone() {
+        // manager 1 is there, manager 2 a virtual one deleted after its sell
+        let manager = Manager {
+            id: 1,
+            pair: "XBTUSD".into(),
+            budget: d("100"),
+            buy_below: d("1"),
+            sell_above: d("1"),
+            mode: "active".into(),
+            quote_available: d("100"),
+            quote_in_buy_order: Decimal::ZERO,
+            base_available: Decimal::ZERO,
+            base_in_sell_order: Decimal::ZERO,
+            position_cost: Decimal::ZERO,
+            entry_price: None,
+            last_price: d("50000"),
+            value: d("100"),
+            first_seen: 0,
+            updated_at: 0,
+            template_id: None,
+            deleted_at: None,
+            holding: None,
+        };
+        let gone = |time, side, executed, cost| Order {
+            manager_id: 2,
+            ..order(time, side, executed, cost, "0")
+        };
+        let model = Model::new(Data {
+            managers: vec![manager],
+            orders: vec![
+                gone(1.0, Side::Buy, "0.002", "100"),
+                gone(2.0, Side::Sell, "0.002", "103"),
+            ],
+            ..Data::default()
+        });
+
+        assert_eq!(model.ids_of("USD"), vec![1, 2]);
+        assert_eq!(model.trades.len(), 1);
+        let totals = model.totals_of(&model.ids_of("USD"));
+        assert_eq!(totals.trades, 1);
+        assert_eq!(totals.realized, d("3"));
+        // what's there only: a manager gone holds nothing
+        assert_eq!((totals.managers, totals.budget), (1, d("100")));
+        assert_eq!(model.totals[0].realized, d("3"));
     }
 
     #[test]

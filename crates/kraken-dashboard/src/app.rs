@@ -424,14 +424,11 @@ impl App {
             Some(manager) => vec![manager.id],
             None => {
                 // the managers of the main quote currency: their amounts add up
-                let quote = self.model.totals.first().map(|it| it.quote.as_str());
                 self.model
-                    .data
-                    .managers
-                    .iter()
-                    .filter(|it| self.model.quotes.get(&it.id).map(String::as_str) == quote)
-                    .map(|it| it.id)
-                    .collect()
+                    .totals
+                    .first()
+                    .map(|it| self.model.ids_of(&it.quote))
+                    .unwrap_or_default()
             }
         }
     }
